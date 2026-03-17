@@ -1,17 +1,17 @@
 modules:
   jira:fullPage:
-    - key: jira-planner-hello-world-full-page
+    - key: super-planner-full-page
       resource: main
       resolver:
         function: resolver
-      title: jira-planner
-      routePrefix: hello-world
+      title: Super Planner
+      routePrefix: super-planner
   function:
     - key: resolver
       handler: index.handler
 resources:
   - key: main
-    path: static/hello-world/build
+    path: static/planner-ui/build
 app:
   runtime:
     name: nodejs24.x
@@ -21,3 +21,8 @@ app:
 permissions:
   scopes:
     - read:jira-user
+    - read:jira-work
+    - read:sprint:jira-software
+    - read:board-scope:jira-software
+    - read:issue-details:jira
+    - read:project:jira

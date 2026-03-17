@@ -1,5 +1,5 @@
 {
-  "name": "jira-planner",
+  "name": "super-planner",
   "dockerComposeFile": "./docker-compose.yml",
   "service": "dev",
   "runServices": ["dev"],
