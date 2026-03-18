@@ -102,21 +102,27 @@ Work through these tasks in order. Find the first unchecked task and implement i
   - Epics can be dragged from the backlog panel into the grid, and vice versa
   - Goal: backlog is accessible but not cluttering the planning grid
 
-- [ ] **Step 17 — Multiple named grids via custom Jira field**
-  - A custom Jira Select field (e.g. "Planning Group") is set on epics to indicate which grid they belong to
-  - On load, discover the field ID by name using `GET /rest/api/3/field` — no hardcoding
-  - Fetch all available options for the field using `GET /rest/api/3/field/{fieldId}/context/{contextId}/option`
-  - Render one tab per option value (e.g. Engineering | Business) plus an "All" tab showing every epic
-  - Switching tabs re-filters the already-loaded epics client-side — no extra API call needed
-  - Epics with no value set for the field appear only in the "All" tab
+- [ ] **Step 17 — Multiple named grids via "Focus Area" custom field**
+  - The custom Jira Select field is named "Focus Area" (set up manually in Jira settings)
+  - Field name stored as a constant `FOCUS_AREA_FIELD_NAME = 'Focus Area'` in the resolver — easy to change
+  - New `getFocusAreaField` resolver: calls `GET /rest/api/3/field`, finds the field by name, then fetches its
+    context ID and all options via `GET /rest/api/3/field/{fieldId}/context` and `.../option`
+    Returns `{ fieldId, contextId, options: [{ id, value }] }`
+  - Update `getEpics` to include the focus area custom field so each epic carries its group value
+  - Frontend: on load call `getFocusAreaField` alongside existing calls
+  - Render tabs: "All" + one per field option; switching tabs filters already-loaded epics client-side
+  - Epics with no Focus Area value appear only in the "All" tab
   - Goal: planning grid automatically reflects however many groups are defined in Jira
 
-- [ ] **Step 18 — Manage Planning Group options from the app**
-  - Add a settings panel (gear icon or small "Manage groups" link) that lists current field options
-  - Allow adding a new option: text input + "Add" button → `POST /rest/api/3/field/{fieldId}/context/{contextId}/option`
-  - Allow deleting an option (with a warning if any epics currently use it)
-  - Requires `manage:jira-configuration` scope (new major version, upgrade install needed)
-  - Goal: users can define new planning groups without leaving the app or needing Jira admin UI
+- [ ] **Step 18 — Manage Focus Area options from the app**
+  - Add a ⚙ button next to the tabs that opens a small inline panel listing current options
+  - Allow adding a new option: text input + "Add" → `POST /rest/api/3/field/{fieldId}/context/{contextId}/option`
+  - Allow deleting an option → `DELETE /rest/api/3/field/{fieldId}/context/{contextId}/option/{optionId}`
+    (warn if any loaded epics currently use that value)
+  - Also allow setting the Focus Area value on an epic directly from the card (a small dropdown on the card)
+    → `PUT /rest/api/3/issue/{epicKey}` with the field value
+  - Requires `manage:jira-configuration` scope (major version bump, upgrade install needed)
+  - Goal: users can define new planning groups and assign epics without leaving the planner
 
 - [ ] **Step 19 — Open epic in Jira**
   - Each epic card's key (e.g. T0-123) should be a clickable link that opens the Jira issue in a new tab
