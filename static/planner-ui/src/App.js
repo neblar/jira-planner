@@ -31,15 +31,20 @@ function startOfDay(date) {
     return d;
 }
 
-// Build a list of every calendar day covering all sprints' date ranges.
+// Build a list of every calendar day, spanning full months so labels have room.
+// Starts on the 1st of the earliest sprint's month, ends on the last day of the latest sprint's month.
 function computeCalendarDays(sprints) {
     const dated = sprints.filter(s => s.startDate && s.endDate);
     if (!dated.length) return [];
-    const earliest = startOfDay(new Date(Math.min(...dated.map(s => new Date(s.startDate)))));
-    const latest   = startOfDay(new Date(Math.max(...dated.map(s => new Date(s.endDate)))));
+    const minDate = new Date(Math.min(...dated.map(s => new Date(s.startDate))));
+    const maxDate = new Date(Math.max(...dated.map(s => new Date(s.endDate))));
+    // Snap to first day of earliest month
+    const start = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+    // Snap to last day of latest month
+    const end   = new Date(maxDate.getFullYear(), maxDate.getMonth() + 1, 0);
     const days = [];
-    const cur = new Date(earliest);
-    while (cur <= latest) {
+    const cur = new Date(start);
+    while (cur <= end) {
         days.push(new Date(cur));
         cur.setDate(cur.getDate() + 1);
     }
@@ -159,6 +164,9 @@ const rowLabelStyle = (row) => ({
     alignItems: 'flex-start',
     paddingTop: 10,
     fontSize: 13,
+    position: 'sticky',
+    left: 0,
+    zIndex: 1,
 });
 
 const cellStyle = (isOver) => ({
@@ -286,6 +294,9 @@ const cornerStyle = {
     background: '#ecedf0',
     borderRight: '1px solid #ccc',
     borderBottom: '2px solid #ccc',
+    position: 'sticky',
+    left: 0,
+    zIndex: 2,
 };
 
 // --- Components ---
@@ -432,7 +443,7 @@ const toggleButtonStyle = {
 function PlanningGrid({ epics, sprints }) {
     const [positions, setPositions] = useState({});
     const [activeEpic, setActiveEpic] = useState(null);
-    const [showBacklog, setShowBacklog] = useState(false);
+    const [showBacklog, setShowBacklog] = useState(true);
     const scrollRef = useRef(null);
 
     const sensors = useSensors(
