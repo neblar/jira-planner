@@ -789,7 +789,7 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
 
                 {/* Collapsible backlog panel — sectioned to match the grid */}
                 {showBacklog && (
-                    <div style={{ ...backlogPanelStyle, border: '1px solid #ccc', borderRadius: 4 }}>
+                    <div style={{ ...backlogPanelStyle, border: '1px solid #ccc', borderRadius: 4, alignSelf: 'stretch', overflowY: 'auto' }}>
                         <div style={backlogHeaderStyle}>
                             <span>Backlog {backlogCount > 0 && `(${backlogCount})`}</span>
                             <button style={toggleButtonStyle} onClick={() => setShowBacklog(false)}>✕ Hide</button>
