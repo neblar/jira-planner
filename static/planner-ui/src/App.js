@@ -323,8 +323,9 @@ const cornerStyle = {
     borderRight: '1px solid #ccc',
     borderBottom: '2px solid #ccc',
     position: 'sticky',
+    top: 0,
     left: 0,
-    zIndex: 2,
+    zIndex: 3, // above both sticky header row cells (z:2) and sticky row labels (z:1)
 };
 
 // --- Components ---
@@ -523,6 +524,15 @@ function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, 
 
 const DAY_COL_WIDTH = 24; // px per day column
 
+// Explicit heights for the 4 calendar header rows — used for gridTemplateRows and sticky top values.
+const HDR_Q = 24; // quarter
+const HDR_M = 22; // month
+const HDR_D = 22; // day ticks
+const HDR_S = 28; // sprint name
+const HDR_TOP_M = HDR_Q;
+const HDR_TOP_D = HDR_Q + HDR_M;
+const HDR_TOP_S = HDR_Q + HDR_M + HDR_D;
+
 const backlogPanelStyle = {
     width: 220,
     flexShrink: 0,
@@ -702,33 +712,42 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                 }
             `}</style>
 
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                {/* Scrollable calendar grid — scroll container IS the grid so sticky works */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, height: '100%' }}>
+                {/* Scrollable calendar grid — scroll container for BOTH axes so sticky headers work */}
                 <div
                     ref={scrollRef}
                     style={{
-                        flex: 1, minWidth: 0,
-                        display: 'grid', gridTemplateColumns,
-                        overflowX: 'auto', border: '1px solid #ccc', borderRadius: 4,
+                        flex: 1, minWidth: 0, height: '100%',
+                        display: 'grid',
+                        gridTemplateColumns,
+                        gridTemplateRows: `${HDR_Q}px ${HDR_M}px ${HDR_D}px ${HDR_S}px`,
+                        overflowX: 'auto', overflowY: 'auto',
+                        border: '1px solid #ccc', borderRadius: 4,
                     }}
                 >
                     <div style={cornerStyle} />
 
-                    {/* Row 1 — Quarters */}
+                    {/* Row 1 — Quarters (sticky top) */}
                     {quarterGroups.map((q, i) => (
-                        <div key={i} style={quarterCellStyle({ gridRow: 1, gridColumn: `${q.startIdx + 2} / span ${q.span}` })}>
+                        <div key={i} style={quarterCellStyle({
+                            gridRow: 1, gridColumn: `${q.startIdx + 2} / span ${q.span}`,
+                            position: 'sticky', top: 0, zIndex: 2,
+                        })}>
                             {q.label}
                         </div>
                     ))}
 
-                    {/* Row 2 — Months */}
+                    {/* Row 2 — Months (sticky top) */}
                     {monthGroups.map((m, i) => (
-                        <div key={i} style={monthCellStyle({ gridRow: 2, gridColumn: `${m.startIdx + 2} / span ${m.span}` })}>
+                        <div key={i} style={monthCellStyle({
+                            gridRow: 2, gridColumn: `${m.startIdx + 2} / span ${m.span}`,
+                            position: 'sticky', top: HDR_TOP_M, zIndex: 2,
+                        })}>
                             {m.label}
                         </div>
                     ))}
 
-                    {/* Row 3 — Day ticks */}
+                    {/* Row 3 — Day ticks (sticky top) */}
                     {days.map((d, i) => {
                         const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                         return (
@@ -736,18 +755,20 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                 ...dayCellStyle, gridRow: 3, gridColumn: i + 2,
                                 background: isWeekend ? '#e8e9ec' : '#f4f5f7',
                                 color: isWeekend ? '#aaa' : '#888',
+                                position: 'sticky', top: HDR_TOP_D, zIndex: 2,
                             }}>
                                 {d.getDate()}
                             </div>
                         );
                     })}
 
-                    {/* Row 4 — Sprint names */}
+                    {/* Row 4 — Sprint names (sticky top) */}
                     {sprints.map(s => {
                         const sp = sprintSpans[s.id];
                         return (
                             <div key={s.id} style={sprintCellStyle(s.state === 'active', {
                                 gridRow: 4, gridColumn: sp ? `${sp.startIdx + 2} / span ${sp.span}` : '2',
+                                position: 'sticky', top: HDR_TOP_S, zIndex: 2,
                             })}>
                                 {s.name}
                                 {s.state === 'active' && <span style={{ fontSize: 10, fontWeight: 'normal', marginLeft: 4 }}>· active</span>}
@@ -1070,8 +1091,8 @@ function App() {
         : (epics ? [...new Set(epics.map(e => e.focusArea).filter(Boolean))].sort() : []);
 
     return (
-        <div style={{ padding: 16, fontFamily: 'sans-serif', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
-            <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ padding: 16, fontFamily: 'sans-serif', height: '100vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ marginBottom: 16, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                 <div>
                     <label htmlFor="board-select" style={{ marginRight: 6 }}>Board:</label>
                     <select
@@ -1108,7 +1129,7 @@ function App() {
             </div>
 
             {focusAreaField && (
-                <div style={{ marginBottom: 8 }}>
+                <div style={{ marginBottom: 8, flexShrink: 0 }}>
                     <FocusAreaSettings
                         focusAreaField={focusAreaField}
                         epics={epics}
@@ -1117,21 +1138,24 @@ function App() {
                 </div>
             )}
 
-            {!sprints || !epics
-                ? <GridSkeleton />
-                : <PlanningGrid
-                    epics={epics}
-                    sprints={sprints}
-                    focusAreaField={focusAreaField}
-                    focusAreaOptions={focusAreaOptions}
-                    epicProgress={epicProgress}
-                    onFocusAreaChange={(epicKey, value) => {
-                        setEpics(prev => prev.map(e =>
-                            e.key === epicKey ? { ...e, focusArea: value } : e
-                        ));
-                    }}
-                />
-            }
+            {/* Grid area fills remaining viewport height */}
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                {!sprints || !epics
+                    ? <GridSkeleton />
+                    : <PlanningGrid
+                        epics={epics}
+                        sprints={sprints}
+                        focusAreaField={focusAreaField}
+                        focusAreaOptions={focusAreaOptions}
+                        epicProgress={epicProgress}
+                        onFocusAreaChange={(epicKey, value) => {
+                            setEpics(prev => prev.map(e =>
+                                e.key === epicKey ? { ...e, focusArea: value } : e
+                            ));
+                        }}
+                    />
+                }
+            </div>
         </div>
     );
 }
