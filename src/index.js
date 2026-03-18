@@ -214,6 +214,50 @@ resolver.define('getEpics', async (req) => {
     });
 });
 
+// Fetch completion counts for a list of epics in a single JQL query.
+// Returns { [epicKey]: { total, done } }.
+// Handles both classic projects (Epic Link field) and next-gen (parent field).
+resolver.define('getEpicsProgress', async (req) => {
+    const { epicKeys } = req.payload;
+    if (!epicKeys?.length) return {};
+
+    // Batch into chunks of 50 to stay within JQL length limits.
+    const CHUNK = 50;
+    const merged = {};
+
+    for (let i = 0; i < epicKeys.length; i += CHUNK) {
+        const chunk = epicKeys.slice(i, i + CHUNK);
+        const keysJql = chunk.join(',');
+
+        const response = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jql: `issueType != Epic AND ("Epic Link" in (${keysJql}) OR parent in (${keysJql}))`,
+                fields: ['status', 'parent', 'customfield_10014'],
+                maxResults: 1000,
+            }),
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Jira API error ${response.status}: ${text}`);
+        }
+
+        const data = await response.json();
+        for (const issue of data.issues) {
+            // customfield_10014 = Epic Link (classic); parent.key = next-gen parent
+            const epicKey = issue.fields.customfield_10014 ?? issue.fields.parent?.key ?? null;
+            if (!epicKey || !chunk.includes(epicKey)) continue;
+            if (!merged[epicKey]) merged[epicKey] = { total: 0, done: 0 };
+            merged[epicKey].total++;
+            if (issue.fields.status?.statusCategory?.name === 'Done') merged[epicKey].done++;
+        }
+    }
+
+    return merged;
+});
+
 // Set (or clear) the Focus Area custom field on an epic.
 // Pass value = null to clear it.
 resolver.define('updateEpicFocusArea', async (req) => {

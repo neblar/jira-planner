@@ -370,7 +370,20 @@ function GridSkeleton() {
     );
 }
 
-function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, onFocusAreaChange }) {
+function ProgressBar({ total, done }) {
+    if (total === 0) return null;
+    const pct = Math.round((done / total) * 100);
+    return (
+        <div style={{ marginTop: 5 }}>
+            <div style={{ height: 4, background: '#e0e0e0', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${pct}%`, background: pct === 100 ? '#36b37e' : '#4c8cf5', borderRadius: 2, transition: 'width 0.3s' }} />
+            </div>
+            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>{done}/{total} done ({pct}%)</div>
+        </div>
+    );
+}
+
+function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, onFocusAreaChange, progress }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
         id: epic.key,
         data: { epic },
@@ -452,6 +465,10 @@ function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, 
             </div>
             <div style={{ fontSize: 13, marginTop: 2 }}>{epic.summary}</div>
 
+            {!isDragOverlay && progress && (
+                <ProgressBar total={progress.total} done={progress.done} />
+            )}
+
             {focusAreaField && !isDragOverlay && (
                 <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
                     <select
@@ -529,7 +546,7 @@ const toggleButtonStyle = {
     color: '#333',
 };
 
-function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocusAreaChange }) {
+function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocusAreaChange, epicProgress }) {
     const [positions, setPositions] = useState({});
     const [activeEpic, setActiveEpic] = useState(null);
     const [showBacklog, setShowBacklog] = useState(true);
@@ -682,7 +699,7 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                                     gridColumn={sp ? `${sp.startIdx + 2} / span ${sp.span}` : '2'}
                                                 >
                                                     {(gridData[row.key][s.id] ?? []).map(epic => (
-                                                        <EpicCard key={epic.key} epic={epic} row={row} focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions} onFocusAreaChange={onFocusAreaChange} />
+                                                        <EpicCard key={epic.key} epic={epic} row={row} focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions} onFocusAreaChange={onFocusAreaChange} progress={epicProgress?.[epic.key] ?? null} />
                                                     ))}
                                                 </DroppableCell>
                                             );
@@ -713,7 +730,7 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                 </div>
                                 <DroppableCell id={`${row.key}|backlog`}>
                                     {gridData[row.key].backlog.map(epic => (
-                                        <EpicCard key={epic.key} epic={epic} row={row} focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions} onFocusAreaChange={onFocusAreaChange} />
+                                        <EpicCard key={epic.key} epic={epic} row={row} focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions} onFocusAreaChange={onFocusAreaChange} progress={epicProgress?.[epic.key] ?? null} />
                                     ))}
                                 </DroppableCell>
                             </div>
@@ -937,6 +954,7 @@ function App() {
     const [epics, setEpics] = useState(null);
     const [focusAreaField, setFocusAreaField] = useState(undefined); // undefined = loading, null = not found
     const [selectedTab, setSelectedTab] = useState('all');
+    const [epicProgress, setEpicProgress] = useState({});
     const [error, setError] = useState(null);
 
     // On mount: load reference data and restore board + filter from query params.
@@ -971,8 +989,17 @@ function App() {
     useEffect(() => {
         if (!selectedFilter || focusAreaField === undefined) return;
         setEpics(null);
+        setEpicProgress({});
         invoke('getEpics', { filterId: selectedFilter, focusAreaFieldId })
-            .then(setEpics)
+            .then(data => {
+                setEpics(data);
+                // Fetch progress in the background after epics are rendered.
+                if (data.length) {
+                    invoke('getEpicsProgress', { epicKeys: data.map(e => e.key) })
+                        .then(setEpicProgress)
+                        .catch(() => {}); // progress is non-critical
+                }
+            })
             .catch(err => setError(err.message ?? 'Failed to load epics'));
     }, [selectedFilter, focusAreaFieldId]);
 
@@ -1081,6 +1108,7 @@ function App() {
                     sprints={sprints}
                     focusAreaField={focusAreaField}
                     focusAreaOptions={focusAreaOptions}
+                    epicProgress={epicProgress}
                     onFocusAreaChange={(epicKey, value) => {
                         setEpics(prev => prev.map(e =>
                             e.key === epicKey ? { ...e, focusArea: value } : e
