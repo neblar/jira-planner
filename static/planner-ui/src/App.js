@@ -744,18 +744,28 @@ async function getContext() {
     return appContext;
 }
 
-async function getBoardIdFromPath() {
+// Read boardId and filterId from URL query params.
+async function getParamsFromLocation() {
     const context = await getContext();
     const location = context?.extension?.location ?? '';
-    const match = location.match(/\/super-planner\/(\d+)/);
-    return match ? Number(match[1]) : null;
+    const qIdx = location.indexOf('?');
+    if (qIdx === -1) return { boardId: null, filterId: null };
+    const params = new URLSearchParams(location.slice(qIdx));
+    return {
+        boardId: params.get('boardId') ? Number(params.get('boardId')) : null,
+        filterId: params.get('filterId') ?? null,
+    };
 }
 
-async function navigateToBoard(boardId) {
+// Update the URL query params without reloading — persists board + filter selection.
+async function navigateWithParams(boardId, filterId) {
     const context = await getContext();
     const location = context?.extension?.location ?? '';
-    const base = location.replace(/\/super-planner(\/\d+)?$/, '/super-planner');
-    router.navigate(`${base}/${boardId}`);
+    const basePath = location.split('?')[0];
+    const params = new URLSearchParams();
+    if (boardId != null) params.set('boardId', String(boardId));
+    if (filterId != null) params.set('filterId', String(filterId));
+    router.navigate(`${basePath}?${params.toString()}`);
 }
 
 const settingsPanelStyle = {
@@ -927,51 +937,57 @@ function App() {
     const [epics, setEpics] = useState(null);
     const [focusAreaField, setFocusAreaField] = useState(undefined); // undefined = loading, null = not found
     const [selectedTab, setSelectedTab] = useState('all');
-    const [filterOverride, setFilterOverride] = useState(null); // null = use auto-matched
     const [error, setError] = useState(null);
-    const isInitialBoardSelection = useRef(true);
 
+    // On mount: load reference data and restore board + filter from query params.
     useEffect(() => {
-        Promise.all([invoke('getBoards'), invoke('getFilters'), invoke('getFocusAreaField'), getBoardIdFromPath()])
-            .then(([boardData, filterData, focusField, pathBoardId]) => {
+        Promise.all([invoke('getBoards'), invoke('getFilters'), invoke('getFocusAreaField'), getParamsFromLocation()])
+            .then(([boardData, filterData, focusField, { boardId: paramBoardId, filterId: paramFilterId }]) => {
                 setBoards(boardData);
                 setFilters(filterData);
                 setFocusAreaField(focusField ?? null);
-                const board = (pathBoardId && boardData.find(b => b.id === pathBoardId))
+                const board = (paramBoardId && boardData.find(b => b.id === paramBoardId))
                     ?? boardData[0]
                     ?? null;
-                if (board) setSelectedBoard(board.id);
-                setSelectedFilter(findMatchingFilter(filterData, board));
+                const boardId = board?.id ?? null;
+                setSelectedBoard(boardId);
+                // Honour URL filter param; otherwise auto-match to the board.
+                const filterId = paramFilterId ?? findMatchingFilter(filterData, board);
+                setSelectedFilter(filterId);
             })
             .catch(err => setError(err.message ?? 'Failed to load data'));
     }, []);
 
     useEffect(() => {
-        if (!selectedBoard || !boards) return;
-        if (isInitialBoardSelection.current) {
-            isInitialBoardSelection.current = false;
-        } else {
-            navigateToBoard(selectedBoard);
-        }
+        if (!selectedBoard) return;
         setSprints(null);
         invoke('getSprints', { boardId: selectedBoard })
             .then(setSprints)
             .catch(err => setError(err.message ?? 'Failed to load sprints'));
-        const board = boards.find(b => b.id === selectedBoard || b.id === Number(selectedBoard));
-        setFilterOverride(null); // reset manual override when board changes
-        setSelectedFilter(findMatchingFilter(filters, board));
     }, [selectedBoard]);
 
-    // Only re-fetch epics when the field ID or filter changes — not when options list changes.
+    // Only re-fetch epics when the filter or field ID changes — not on options list updates.
     const focusAreaFieldId = focusAreaField?.fieldId ?? null;
-    const activeFilter = filterOverride ?? selectedFilter;
     useEffect(() => {
-        if (!activeFilter || focusAreaField === undefined) return;
+        if (!selectedFilter || focusAreaField === undefined) return;
         setEpics(null);
-        invoke('getEpics', { filterId: activeFilter, focusAreaFieldId })
+        invoke('getEpics', { filterId: selectedFilter, focusAreaFieldId })
             .then(setEpics)
             .catch(err => setError(err.message ?? 'Failed to load epics'));
-    }, [activeFilter, focusAreaFieldId]);
+    }, [selectedFilter, focusAreaFieldId]);
+
+    function handleBoardChange(boardId) {
+        const board = boards?.find(b => String(b.id) === String(boardId));
+        const filterId = findMatchingFilter(filters, board);
+        setSelectedBoard(boardId);
+        setSelectedFilter(filterId);
+        navigateWithParams(boardId, filterId);
+    }
+
+    function handleFilterChange(filterId) {
+        setSelectedFilter(filterId);
+        navigateWithParams(selectedBoard, filterId);
+    }
 
     if (error) return <div>Error: {error}</div>;
 
@@ -996,7 +1012,7 @@ function App() {
                     <select
                         id="board-select"
                         value={selectedBoard ?? ''}
-                        onChange={e => setSelectedBoard(e.target.value)}
+                        onChange={e => handleBoardChange(e.target.value)}
                         disabled={!boards}
                     >
                         {boards
@@ -1007,19 +1023,18 @@ function App() {
                         }
                     </select>
                 </div>
-                {/* Step 22 — filter override */}
                 <div>
                     <label htmlFor="filter-select" style={{ marginRight: 6, fontSize: 13 }}>Filter:</label>
                     <select
                         id="filter-select"
-                        value={filterOverride ?? selectedFilter ?? ''}
-                        onChange={e => setFilterOverride(e.target.value || null)}
+                        value={selectedFilter ?? ''}
+                        onChange={e => handleFilterChange(e.target.value)}
                         disabled={!filters}
                         style={{ fontSize: 13 }}
                     >
                         {filters
                             ? filters.map(f => (
-                                  <option key={f.id} value={f.id}>{f.name}{f.id === selectedFilter && !filterOverride ? ' ✓' : ''}</option>
+                                  <option key={f.id} value={f.id}>{f.name}</option>
                               ))
                             : <option>Loading...</option>
                         }
