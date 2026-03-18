@@ -46,20 +46,21 @@ function computeCalendarDays(sprints) {
     return days;
 }
 
-// For a sprint, find which day indices it covers and return { startIdx, span }.
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// For a sprint, compute its column span directly from its start/end dates.
+// startIdx = days between days[0] and sprint.startDate
+// span     = days between sprint.startDate and sprint.endDate (inclusive)
 function sprintDaySpan(sprint, days) {
     if (!sprint.startDate || !sprint.endDate || !days.length) return null;
     const s = startOfDay(new Date(sprint.startDate));
     const e = startOfDay(new Date(sprint.endDate));
-    let first = -1, last = -1;
-    for (let i = 0; i < days.length; i++) {
-        if (days[i] >= s && days[i] < e) {
-            if (first === -1) first = i;
-            last = i;
-        }
-    }
-    if (first === -1) return null;
-    return { startIdx: first, span: last - first + 1 };
+    const origin = days[0];
+    const startIdx = Math.round((s - origin) / MS_PER_DAY);
+    const endIdx   = Math.round((e - origin) / MS_PER_DAY);
+    if (startIdx < 0 || startIdx >= days.length) return null;
+    const clampedEnd = Math.min(endIdx, days.length - 1);
+    return { startIdx, span: clampedEnd - startIdx + 1 };
 }
 
 // Group consecutive days by month → [{ label, startIdx, span }]
