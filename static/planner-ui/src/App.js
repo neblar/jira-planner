@@ -268,7 +268,7 @@ const dayCellStyle = {
     borderBottom: '1px solid #ccc',
 };
 
-const sprintCellStyle = (isActive) => ({
+const sprintCellStyle = (isActive, extra) => ({
     ...calBase,
     padding: '5px 8px',
     fontSize: 12,
@@ -277,6 +277,7 @@ const sprintCellStyle = (isActive) => ({
     background: isActive ? '#e6f0ff' : '#f8f8fb',
     borderBottom: '2px solid #ccc',
     borderRight: '1px solid #ccc',
+    ...extra,
 });
 
 const cornerStyle = {
