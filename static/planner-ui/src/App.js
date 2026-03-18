@@ -89,16 +89,36 @@ const gridStyle = (colCount) => ({
     overflowX: 'auto',
 });
 
-const headerCellStyle = (isActive) => ({
-    padding: '8px 12px',
+// Top header row: date range (the prominent calendar label)
+const dateHeaderCellStyle = (isActive) => ({
+    padding: '8px 12px 4px',
     fontWeight: 'bold',
     background: isActive ? '#e6f0ff' : '#f4f5f7',
-    borderBottom: '1px solid #ccc',
     borderRight: '1px solid #eee',
     textAlign: 'center',
     fontSize: 13,
     whiteSpace: 'nowrap',
 });
+
+// Bottom header row: sprint name (secondary label)
+const nameHeaderCellStyle = (isActive) => ({
+    padding: '2px 12px 8px',
+    background: isActive ? '#e6f0ff' : '#f4f5f7',
+    borderBottom: '1px solid #ccc',
+    borderRight: '1px solid #eee',
+    textAlign: 'center',
+    fontSize: 11,
+    color: isActive ? '#0052cc' : '#888',
+    whiteSpace: 'nowrap',
+});
+
+// Corner cell spans both header rows
+const cornerCellStyle = {
+    gridRow: 'span 2',
+    background: '#f4f5f7',
+    borderBottom: '1px solid #ccc',
+    borderRight: '1px solid #ccc',
+};
 
 const rowLabelStyle = (row) => ({
     padding: '8px 12px',
@@ -208,11 +228,14 @@ function GridSkeleton() {
                 }
             `}</style>
             <div style={{ ...gridStyle(4), opacity: 0.6 }}>
-                <div style={headerCellStyle(false)} />
+                <div style={cornerCellStyle} />
                 {[1,2,3,4].map(i => (
-                    <div key={i} style={headerCellStyle(false)}>
+                    <div key={i} style={dateHeaderCellStyle(false)}>
                         <div style={{ height: 14, background: '#e0e0e0', borderRadius: 3, margin: '0 20px' }} />
                     </div>
+                ))}
+                {[1,2,3,4].map(i => (
+                    <div key={i} style={nameHeaderCellStyle(false)} />
                 ))}
                 {ROWS.map(row => (
                     <React.Fragment key={row.key}>
@@ -336,25 +359,26 @@ function PlanningGrid({ epics, sprints }) {
             onDragEnd={handleDragEnd}
         >
             <div style={gridStyle(columns.length)}>
-                <div style={headerCellStyle(false)} />
+                {/* Corner cell spans both header rows */}
+                <div style={cornerCellStyle} />
+
+                {/* Header row 1: date ranges (prominent) */}
                 {columns.map(col => {
                     const dateRange = formatSprintDates(col.startDate, col.endDate);
                     return (
-                        <div key={col.id} style={headerCellStyle(col.state === 'active')}>
-                            {col.name}
-                            {col.state === 'active' && (
-                                <span style={{ display: 'block', fontSize: 10, color: '#0052cc', fontWeight: 'normal' }}>
-                                    active
-                                </span>
-                            )}
-                            {dateRange && (
-                                <span style={{ display: 'block', fontSize: 10, color: '#666', fontWeight: 'normal', marginTop: 2 }}>
-                                    {dateRange}
-                                </span>
-                            )}
+                        <div key={`date-${col.id}`} style={dateHeaderCellStyle(col.state === 'active')}>
+                            {dateRange ?? col.name}
                         </div>
                     );
                 })}
+
+                {/* Header row 2: sprint names (secondary) */}
+                {columns.map(col => (
+                    <div key={`name-${col.id}`} style={nameHeaderCellStyle(col.state === 'active')}>
+                        {col.name}
+                        {col.state === 'active' && ' · active'}
+                    </div>
+                ))}
 
                 {ROWS.map(row => (
                     <React.Fragment key={row.key}>
