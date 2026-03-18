@@ -28,10 +28,9 @@ function getPriorityRow(priority) {
     return 'Lowest';
 }
 
-// Build the grid lookup. Priority order for position:
-// 1. Local drag-and-drop override (positions map) — most recent user action
-// 2. Stored Jira issue property (epic.position) — persisted from previous sessions
-// 3. Default: Backlog column, priority row from Jira field
+// Build the grid lookup.
+// Column: local drag override → Jira sprint field → Backlog
+// Row: local drag override → Jira priority field → Lowest
 function buildGridData(epics, columns, positions) {
     const grid = {};
     for (const row of ROWS) {
@@ -41,10 +40,9 @@ function buildGridData(epics, columns, positions) {
         }
     }
     for (const epic of epics) {
-        const local   = positions[epic.key];
-        const stored  = epic.position;
-        const rowKey  = local?.rowKey  ?? stored?.rowKey  ?? getPriorityRow(epic.priority);
-        const colId   = local?.colId   ?? (stored ? String(stored.sprintId) : null) ?? BACKLOG_COLUMN.id;
+        const local  = positions[epic.key];
+        const rowKey = local?.rowKey ?? getPriorityRow(epic.priority);
+        const colId  = local?.colId  ?? epic.sprintId ?? BACKLOG_COLUMN.id;
         // Guard against stale positions referencing a sprint column that no longer exists
         const validCol = grid[rowKey]?.[colId] !== undefined ? colId : BACKLOG_COLUMN.id;
         grid[rowKey][validCol].push(epic);
@@ -300,14 +298,20 @@ function PlanningGrid({ epics, sprints }) {
         // Update local state immediately so the UI responds without waiting
         setPositions(prev => ({ ...prev, [active.id]: { rowKey, colId } }));
 
-        // Persist to Jira issue property — find sprint name from colId
-        const sprint = sprints.find(s => String(s.id) === colId);
-        invoke('setEpicPosition', {
+        const isBacklog = colId === BACKLOG_COLUMN.id;
+        const sprintId  = isBacklog ? null : Number(colId);
+
+        // Assign the epic to the sprint in Jira so it survives sprint completion
+        invoke('assignEpicToSprint', {
             epicKey: active.id,
-            sprintId: colId === BACKLOG_COLUMN.id ? null : sprint?.id ?? null,
-            sprintName: colId === BACKLOG_COLUMN.id ? null : sprint?.name ?? null,
-            rowKey,
-        }).catch(err => console.error('Failed to save position:', err));
+            sprintId,
+        }).catch(err => console.error('Failed to assign sprint:', err));
+
+        // Update the Jira priority field to match the row the epic was dropped into
+        invoke('updateEpicPriority', {
+            epicKey: active.id,
+            priority: rowKey,
+        }).catch(err => console.error('Failed to update priority:', err));
     }
 
     return (

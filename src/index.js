@@ -75,7 +75,7 @@ resolver.define('getFilters', async () => {
 });
 
 // Fetch all non-Done epics matching the given saved filter.
-// Also fetches the `super-planner` issue property so stored grid positions are included.
+// Column placement comes from the Jira sprint field; row from the Jira priority field.
 resolver.define('getEpics', async (req) => {
     const { filterId } = req.payload;
 
@@ -86,8 +86,7 @@ resolver.define('getEpics', async (req) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 jql: `filter = ${filterId} AND issuetype = Epic AND statusCategory != Done ORDER BY created DESC`,
-                fields: ['summary', 'priority', 'status'],
-                properties: ['super-planner'],
+                fields: ['summary', 'priority', 'status', 'customfield_10020'],
                 maxResults: 200,
             }),
         });
@@ -100,29 +99,66 @@ resolver.define('getEpics', async (req) => {
     const data = await response.json();
 
     return data.issues.map(issue => {
-        // Issue properties are returned as an object keyed by property name
-        const position = issue.properties?.['super-planner'] ?? null;
+        // customfield_10020 is the sprint field — returned as an array; pick the active sprint
+        // or fall back to the last one if none is active.
+        const sprints = issue.fields.customfield_10020 ?? [];
+        const activeSprint = sprints.find(s => s.state === 'active') ?? sprints[sprints.length - 1] ?? null;
         return {
             key: issue.key,
             summary: issue.fields.summary,
             priority: issue.fields.priority?.name ?? null,
-            // position is null if the epic has never been placed in the grid
-            position,
+            // sprintId from the actual Jira sprint field — source of truth for column placement
+            sprintId: activeSprint ? String(activeSprint.id) : null,
         };
     });
 });
 
-// Write the grid position for an epic as a Jira issue property.
-// This is called after every drag-and-drop so the position persists across refreshes.
-resolver.define('setEpicPosition', async (req) => {
-    const { epicKey, sprintId, sprintName, rowKey } = req.payload;
+// Update the priority field on an epic in Jira.
+// rowKey matches Jira priority names exactly (Highest, High, Medium, Low, Lowest).
+resolver.define('updateEpicPriority', async (req) => {
+    const { epicKey, priority } = req.payload;
 
     const response = await api
         .asUser()
-        .requestJira(route`/rest/api/3/issue/${epicKey}/properties/super-planner`, {
+        .requestJira(route`/rest/api/3/issue/${epicKey}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sprintId, sprintName, rowKey }),
+            body: JSON.stringify({ fields: { priority: { name: priority } } }),
+        });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Jira API error ${response.status}: ${text}`);
+    }
+});
+
+// Assign an epic to a sprint using the Agile API.
+// Pass sprintId = null to move the epic to the backlog.
+resolver.define('assignEpicToSprint', async (req) => {
+    const { epicKey, sprintId } = req.payload;
+
+    if (sprintId === null) {
+        // Move to backlog
+        const response = await api
+            .asUser()
+            .requestJira(route`/rest/agile/1.0/backlog/issue`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ issues: [epicKey] }),
+            });
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Jira API error ${response.status}: ${text}`);
+        }
+        return;
+    }
+
+    const response = await api
+        .asUser()
+        .requestJira(route`/rest/agile/1.0/sprint/${sprintId}/issue`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ issues: [epicKey] }),
         });
 
     if (!response.ok) {

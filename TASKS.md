@@ -80,6 +80,6 @@ Work through these tasks in order. Find the first unchecked task and implement i
   - Show a subtle "empty" indicator for cells that have no epics
   - Goal: the app feels responsive and complete at all grid states
 
-- [ ] **Step 13 — Priority colour coding**
+- [x] **Step 13 — Priority colour coding**
   - Give each priority row (and its cards) a distinct colour: Highest = red, High = orange, Medium = yellow, Low = blue, Lowest = grey
   - Goal: priority is immediately readable at a glance
