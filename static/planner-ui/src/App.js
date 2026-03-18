@@ -20,50 +20,121 @@ const ROWS = [
 ];
 
 const VALID_PRIORITY_KEYS = new Set(ROWS.map(r => r.key));
-
 const BACKLOG_COLUMN = { id: 'backlog', name: 'Backlog', state: 'backlog' };
-
 const THIS_YEAR = new Date().getFullYear();
 
-function formatSprintDates(startDate, endDate) {
-    if (!startDate && !endDate) return null;
-    const fmt = (iso) => {
-        const d = new Date(iso);
-        const opts = { month: 'short', day: 'numeric' };
-        if (d.getFullYear() !== THIS_YEAR) opts.year = 'numeric';
-        return d.toLocaleDateString(undefined, opts);
-    };
-    if (startDate && endDate) return `${fmt(startDate)} – ${fmt(endDate)}`;
-    if (startDate) return `From ${fmt(startDate)}`;
-    return `Until ${fmt(endDate)}`;
+// --- Calendar helpers ---
+
+// Return the Monday on or before a given date.
+function toMonday(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    const dow = d.getDay(); // 0=Sun
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    return d;
 }
+
+// Build a list of Mondays covering all sprints' date ranges.
+function computeCalendarWeeks(sprints) {
+    const dated = sprints.filter(s => s.startDate && s.endDate);
+    if (!dated.length) return [];
+    const earliest = toMonday(new Date(Math.min(...dated.map(s => new Date(s.startDate)))));
+    const latest   = new Date(Math.max(...dated.map(s => new Date(s.endDate))));
+    const weeks = [];
+    const cur = new Date(earliest);
+    while (cur <= latest) {
+        weeks.push(new Date(cur));
+        cur.setDate(cur.getDate() + 7);
+    }
+    return weeks;
+}
+
+// For a sprint, find which week indices it overlaps and return { startIdx, span }.
+function sprintWeekSpan(sprint, weeks) {
+    if (!sprint.startDate || !sprint.endDate || !weeks.length) return null;
+    const s = new Date(sprint.startDate);
+    const e = new Date(sprint.endDate);
+    let first = -1, last = -1;
+    for (let i = 0; i < weeks.length; i++) {
+        const wEnd = new Date(weeks[i]);
+        wEnd.setDate(wEnd.getDate() + 7);
+        if (weeks[i] < e && wEnd > s) {
+            if (first === -1) first = i;
+            last = i;
+        }
+    }
+    if (first === -1) return null;
+    return { startIdx: first, span: last - first + 1 };
+}
+
+// Group consecutive weeks by month → [{ label, startIdx, span }]
+function computeMonthGroups(weeks) {
+    if (!weeks.length) return [];
+    const groups = [];
+    let cur = null, startIdx = 0;
+    for (let i = 0; i < weeks.length; i++) {
+        const key = `${weeks[i].getFullYear()}-${weeks[i].getMonth()}`;
+        if (key !== cur) {
+            if (cur !== null) groups.push({ label: monthLabel(weeks[startIdx]), startIdx, span: i - startIdx });
+            cur = key; startIdx = i;
+        }
+    }
+    if (cur !== null) groups.push({ label: monthLabel(weeks[startIdx]), startIdx, span: weeks.length - startIdx });
+    return groups;
+}
+
+function monthLabel(d) {
+    const opts = { month: 'long' };
+    if (d.getFullYear() !== THIS_YEAR) opts.year = 'numeric';
+    return d.toLocaleDateString(undefined, opts);
+}
+
+// Group consecutive weeks by quarter → [{ label, startIdx, span }]
+function computeQuarterGroups(weeks) {
+    if (!weeks.length) return [];
+    const groups = [];
+    let cur = null, startIdx = 0;
+    for (let i = 0; i < weeks.length; i++) {
+        const q = Math.floor(weeks[i].getMonth() / 3);
+        const key = `${weeks[i].getFullYear()}-${q}`;
+        if (key !== cur) {
+            if (cur !== null) groups.push({ label: `Q${Number(cur.split('-')[1]) + 1}`, startIdx, span: i - startIdx });
+            cur = key; startIdx = i;
+        }
+    }
+    if (cur !== null) groups.push({ label: `Q${Number(cur.split('-')[1]) + 1}`, startIdx, span: weeks.length - startIdx });
+    return groups;
+}
+
+// --- Grid data ---
 
 function getPriorityRow(priority) {
     if (priority && VALID_PRIORITY_KEYS.has(priority)) return priority;
     return 'Lowest';
 }
 
-// Build the grid lookup.
-// Column: local drag override → Jira sprint field → Backlog
-// Row: local drag override → Jira priority field → Lowest
-function buildGridData(epics, columns, positions) {
+function buildGridData(epics, sprints, positions) {
     const grid = {};
     for (const row of ROWS) {
-        grid[row.key] = {};
-        for (const col of columns) {
-            grid[row.key][col.id] = [];
-        }
+        grid[row.key] = { backlog: [] };
+        for (const s of sprints) grid[row.key][s.id] = [];
     }
     for (const epic of epics) {
         const local  = positions[epic.key];
         const rowKey = local?.rowKey ?? getPriorityRow(epic.priority);
         const colId  = local?.colId  ?? epic.sprintId ?? BACKLOG_COLUMN.id;
-        // Guard against stale positions referencing a sprint column that no longer exists
-        const validCol = grid[rowKey]?.[colId] !== undefined ? colId : BACKLOG_COLUMN.id;
-        grid[rowKey][validCol].push(epic);
+        const row    = grid[rowKey] ?? grid['Lowest'];
+        // Guard against stale sprint IDs
+        if (colId === BACKLOG_COLUMN.id || row[colId] !== undefined) {
+            (row[colId] ?? row.backlog).push(epic);
+        } else {
+            row.backlog.push(epic);
+        }
     }
     return grid;
 }
+
+// --- Jira fetch ---
 
 async function fetchChildIssues(epicKey) {
     const jql = encodeURIComponent(
@@ -80,45 +151,6 @@ async function fetchChildIssues(epicKey) {
 }
 
 // --- Styles ---
-
-const gridStyle = (colCount) => ({
-    display: 'grid',
-    gridTemplateColumns: `120px repeat(${colCount}, minmax(140px, 1fr))`,
-    border: '1px solid #ccc',
-    borderRadius: 4,
-    overflowX: 'auto',
-});
-
-// Top header row: date range (the prominent calendar label)
-const dateHeaderCellStyle = (isActive) => ({
-    padding: '8px 12px 4px',
-    fontWeight: 'bold',
-    background: isActive ? '#e6f0ff' : '#f4f5f7',
-    borderRight: '1px solid #eee',
-    textAlign: 'center',
-    fontSize: 13,
-    whiteSpace: 'nowrap',
-});
-
-// Bottom header row: sprint name (secondary label)
-const nameHeaderCellStyle = (isActive) => ({
-    padding: '2px 12px 8px',
-    background: isActive ? '#e6f0ff' : '#f4f5f7',
-    borderBottom: '1px solid #ccc',
-    borderRight: '1px solid #eee',
-    textAlign: 'center',
-    fontSize: 11,
-    color: isActive ? '#0052cc' : '#888',
-    whiteSpace: 'nowrap',
-});
-
-// Corner cell spans both header rows
-const cornerCellStyle = {
-    gridRow: 'span 2',
-    background: '#f4f5f7',
-    borderBottom: '1px solid #ccc',
-    borderRight: '1px solid #ccc',
-};
 
 const rowLabelStyle = (row) => ({
     padding: '8px 12px',
@@ -200,15 +232,72 @@ const childKeyStyle = {
     marginRight: 4,
 };
 
+// Shared base for all calendar header cells
+const calBase = {
+    textAlign: 'center',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    borderRight: '1px solid #e0e0e0',
+};
+
+const quarterCellStyle = (extra) => ({
+    ...calBase,
+    padding: '4px 8px',
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#444',
+    background: '#ecedf0',
+    borderBottom: '1px solid #d0d0d0',
+    ...extra,
+});
+
+const monthCellStyle = (extra) => ({
+    ...calBase,
+    padding: '3px 8px',
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#333',
+    background: '#f0f1f4',
+    borderBottom: '1px solid #d8d8d8',
+    ...extra,
+});
+
+const dayCellStyle = {
+    ...calBase,
+    padding: '2px 4px',
+    fontSize: 11,
+    color: '#888',
+    background: '#f4f5f7',
+    borderBottom: '1px solid #ccc',
+};
+
+const sprintCellStyle = (isActive) => ({
+    ...calBase,
+    padding: '5px 8px',
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: isActive ? '#0052cc' : '#333',
+    background: isActive ? '#e6f0ff' : '#f8f8fb',
+    borderBottom: '2px solid #ccc',
+    borderRight: '1px solid #ccc',
+});
+
+const cornerStyle = {
+    gridRow: '1 / span 4',
+    gridColumn: 1,
+    background: '#ecedf0',
+    borderRight: '1px solid #ccc',
+    borderBottom: '2px solid #ccc',
+};
+
 // --- Components ---
 
-// A droppable grid cell — highlights when an epic is dragged over it.
-// Shows a subtle empty indicator when there are no epics.
-function DroppableCell({ id, children }) {
+function DroppableCell({ id, children, gridRow, gridColumn }) {
     const { setNodeRef, isOver } = useDroppable({ id });
     const isEmpty = React.Children.count(children) === 0;
     return (
-        <div ref={setNodeRef} style={cellStyle(isOver)}>
+        <div ref={setNodeRef} style={{ ...cellStyle(isOver), gridRow, gridColumn }}>
             {isEmpty
                 ? <div style={emptyCellStyle}>·</div>
                 : children
@@ -217,8 +306,9 @@ function DroppableCell({ id, children }) {
     );
 }
 
-// Skeleton grid shown while sprints/epics are loading
 function GridSkeleton() {
+    // Show 8 placeholder week columns while loading
+    const N = 8;
     return (
         <>
             <style>{`
@@ -227,24 +317,42 @@ function GridSkeleton() {
                     100% { background-position: -200% 0; }
                 }
             `}</style>
-            <div style={{ ...gridStyle(4), opacity: 0.6 }}>
-                <div style={cornerCellStyle} />
-                {[1,2,3,4].map(i => (
-                    <div key={i} style={dateHeaderCellStyle(false)}>
-                        <div style={{ height: 14, background: '#e0e0e0', borderRadius: 3, margin: '0 20px' }} />
-                    </div>
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: `120px repeat(${N}, minmax(40px, 1fr)) minmax(140px, 1fr)`,
+                border: '1px solid #ccc',
+                borderRadius: 4,
+                overflowX: 'auto',
+                opacity: 0.6,
+            }}>
+                {/* Corner */}
+                <div style={cornerStyle} />
+                {/* Quarter row */}
+                <div style={{ ...quarterCellStyle(), gridColumn: `2 / span ${N}` }} />
+                <div style={quarterCellStyle({ gridColumn: N + 2 })} />
+                {/* Month row */}
+                <div style={{ ...monthCellStyle(), gridColumn: `2 / span ${N}` }}>
+                    <div style={{ height: 12, background: '#d8d8d8', borderRadius: 3, margin: '2px 20px' }} />
+                </div>
+                <div style={monthCellStyle({ gridColumn: N + 2 })} />
+                {/* Day row */}
+                {Array.from({ length: N }, (_, i) => (
+                    <div key={i} style={{ ...dayCellStyle, gridColumn: i + 2 }} />
                 ))}
-                {[1,2,3,4].map(i => (
-                    <div key={i} style={nameHeaderCellStyle(false)} />
-                ))}
-                {ROWS.map(row => (
+                <div style={{ ...dayCellStyle, gridColumn: N + 2 }} />
+                {/* Sprint name row */}
+                <div style={{ ...sprintCellStyle(false), gridColumn: `2 / span ${N}` }}>
+                    <div style={{ height: 13, background: '#d8d8d8', borderRadius: 3, margin: '2px 30px' }} />
+                </div>
+                <div style={{ ...sprintCellStyle(false), gridColumn: N + 2 }}>Backlog</div>
+                {/* Data rows */}
+                {ROWS.map((row, ri) => (
                     <React.Fragment key={row.key}>
-                        <div style={rowLabelStyle(row)}>{row.label}</div>
-                        {[1,2,3,4].map(i => (
-                            <div key={i} style={cellStyle(false)}>
-                                {i === 1 && <div style={skeletonStyle} />}
-                            </div>
-                        ))}
+                        <div style={{ ...rowLabelStyle(row), gridRow: ri + 5, gridColumn: 1 }}>{row.label}</div>
+                        <div style={{ ...cellStyle(false), gridRow: ri + 5, gridColumn: `2 / span ${N}` }}>
+                            {ri === 0 && <div style={skeletonStyle} />}
+                        </div>
+                        <div style={{ ...cellStyle(false), gridRow: ri + 5, gridColumn: N + 2 }} />
                     </React.Fragment>
                 ))}
             </div>
@@ -252,8 +360,6 @@ function GridSkeleton() {
     );
 }
 
-// A draggable epic card. Uses a distance activation constraint so that small
-// movements (e.g. clicking to expand) don't accidentally start a drag.
 function EpicCard({ epic, isDragOverlay, row }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
         id: epic.key,
@@ -266,7 +372,6 @@ function EpicCard({ epic, isDragOverlay, row }) {
     const [childError, setChildError] = useState(null);
 
     function toggle(e) {
-        // Don't expand/collapse while dragging
         if (isDragging) return;
         e.stopPropagation();
         if (!expanded && children === null) {
@@ -311,9 +416,6 @@ function EpicCard({ epic, isDragOverlay, row }) {
 }
 
 function PlanningGrid({ epics, sprints }) {
-    const columns = [...sprints, BACKLOG_COLUMN];
-
-    // positions stores drag-and-drop overrides: { [epicKey]: { rowKey, colId } }
     const [positions, setPositions] = useState({});
     const [activeEpic, setActiveEpic] = useState(null);
 
@@ -322,7 +424,20 @@ function PlanningGrid({ epics, sprints }) {
         useSensor(TouchSensor, { activationConstraint: { distance: 5 } }),
     );
 
-    const gridData = buildGridData(epics, columns, positions);
+    // Build week-based calendar columns
+    const weeks        = computeCalendarWeeks(sprints);
+    const numWeeks     = weeks.length;
+    const quarterGroups = computeQuarterGroups(weeks);
+    const monthGroups   = computeMonthGroups(weeks);
+
+    // For each sprint: { startIdx, span } into the week columns
+    const sprintSpans = {};
+    for (const s of sprints) sprintSpans[s.id] = sprintWeekSpan(s, weeks);
+
+    // Backlog is always the last column: numWeeks + 2 (1-based, col 1 = row label)
+    const backlogCol = numWeeks + 2;
+
+    const gridData = buildGridData(epics, sprints, positions);
 
     function handleDragStart({ active }) {
         setActiveEpic(epics.find(e => e.key === active.id) ?? null);
@@ -333,72 +448,124 @@ function PlanningGrid({ epics, sprints }) {
         if (!over) return;
         const [rowKey, colId] = over.id.split('|');
 
-        // Update local state immediately so the UI responds without waiting
         setPositions(prev => ({ ...prev, [active.id]: { rowKey, colId } }));
 
         const isBacklog = colId === BACKLOG_COLUMN.id;
         const sprintId  = isBacklog ? null : Number(colId);
 
-        // Assign the epic to the sprint in Jira so it survives sprint completion
-        invoke('assignEpicToSprint', {
-            epicKey: active.id,
-            sprintId,
-        }).catch(err => console.error('Failed to assign sprint:', err));
+        invoke('assignEpicToSprint', { epicKey: active.id, sprintId })
+            .catch(err => console.error('Failed to assign sprint:', err));
 
-        // Update the Jira priority field to match the row the epic was dropped into
-        invoke('updateEpicPriority', {
-            epicKey: active.id,
-            priority: rowKey,
-        }).catch(err => console.error('Failed to update priority:', err));
+        invoke('updateEpicPriority', { epicKey: active.id, priority: rowKey })
+            .catch(err => console.error('Failed to update priority:', err));
     }
 
-    return (
-        <DndContext
-            sensors={sensors}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-        >
-            <div style={gridStyle(columns.length)}>
-                {/* Corner cell spans both header rows */}
-                <div style={cornerCellStyle} />
+    const gridTemplateColumns = `120px repeat(${numWeeks}, minmax(40px, 1fr)) minmax(140px, 1fr)`;
 
-                {/* Header row 1: date ranges (prominent) */}
-                {columns.map(col => {
-                    const dateRange = formatSprintDates(col.startDate, col.endDate);
+    return (
+        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <style>{`
+                @keyframes shimmer {
+                    0% { background-position: 200% 0; }
+                    100% { background-position: -200% 0; }
+                }
+            `}</style>
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns,
+                border: '1px solid #ccc',
+                borderRadius: 4,
+                overflowX: 'auto',
+            }}>
+                {/* Corner: spans all 4 header rows */}
+                <div style={cornerStyle} />
+
+                {/* Row 1 — Quarters */}
+                {quarterGroups.map((q, i) => (
+                    <div key={i} style={quarterCellStyle({
+                        gridRow: 1,
+                        gridColumn: `${q.startIdx + 2} / span ${q.span}`,
+                    })}>
+                        {q.label}
+                    </div>
+                ))}
+                <div style={quarterCellStyle({ gridRow: 1, gridColumn: backlogCol })} />
+
+                {/* Row 2 — Months */}
+                {monthGroups.map((m, i) => (
+                    <div key={i} style={monthCellStyle({
+                        gridRow: 2,
+                        gridColumn: `${m.startIdx + 2} / span ${m.span}`,
+                    })}>
+                        {m.label}
+                    </div>
+                ))}
+                <div style={monthCellStyle({ gridRow: 2, gridColumn: backlogCol })} />
+
+                {/* Row 3 — Week day ticks (Monday date of each week) */}
+                {weeks.map((w, i) => (
+                    <div key={i} style={{ ...dayCellStyle, gridRow: 3, gridColumn: i + 2 }}>
+                        {w.getDate()}
+                    </div>
+                ))}
+                <div style={{ ...dayCellStyle, gridRow: 3, gridColumn: backlogCol }} />
+
+                {/* Row 4 — Sprint names spanning their weeks */}
+                {sprints.map(s => {
+                    const sp = sprintSpans[s.id];
                     return (
-                        <div key={`date-${col.id}`} style={dateHeaderCellStyle(col.state === 'active')}>
-                            {dateRange ?? col.name}
+                        <div key={s.id} style={sprintCellStyle(s.state === 'active', {
+                            gridRow: 4,
+                            gridColumn: sp ? `${sp.startIdx + 2} / span ${sp.span}` : backlogCol,
+                        })}>
+                            {s.name}
+                            {s.state === 'active' && (
+                                <span style={{ fontSize: 10, fontWeight: 'normal', marginLeft: 4 }}>· active</span>
+                            )}
                         </div>
                     );
                 })}
+                <div style={sprintCellStyle(false, { gridRow: 4, gridColumn: backlogCol })}>Backlog</div>
 
-                {/* Header row 2: sprint names (secondary) */}
-                {columns.map(col => (
-                    <div key={`name-${col.id}`} style={nameHeaderCellStyle(col.state === 'active')}>
-                        {col.name}
-                        {col.state === 'active' && ' · active'}
-                    </div>
-                ))}
-
-                {ROWS.map(row => (
-                    <React.Fragment key={row.key}>
-                        <div style={rowLabelStyle(row)}>{row.label}</div>
-                        {columns.map(col => (
-                            <DroppableCell key={col.id} id={`${row.key}|${col.id}`}>
-                                {gridData[row.key][col.id].map(epic => (
+                {/* Data rows */}
+                {ROWS.map((row, ri) => {
+                    const dataRow = ri + 5;
+                    return (
+                        <React.Fragment key={row.key}>
+                            <div style={{ ...rowLabelStyle(row), gridRow: dataRow, gridColumn: 1 }}>
+                                {row.label}
+                            </div>
+                            {sprints.map(s => {
+                                const sp = sprintSpans[s.id];
+                                return (
+                                    <DroppableCell
+                                        key={s.id}
+                                        id={`${row.key}|${s.id}`}
+                                        gridRow={dataRow}
+                                        gridColumn={sp ? `${sp.startIdx + 2} / span ${sp.span}` : String(backlogCol)}
+                                    >
+                                        {(gridData[row.key][s.id] ?? []).map(epic => (
+                                            <EpicCard key={epic.key} epic={epic} row={row} />
+                                        ))}
+                                    </DroppableCell>
+                                );
+                            })}
+                            <DroppableCell
+                                id={`${row.key}|backlog`}
+                                gridRow={dataRow}
+                                gridColumn={String(backlogCol)}
+                            >
+                                {gridData[row.key].backlog.map(epic => (
                                     <EpicCard key={epic.key} epic={epic} row={row} />
                                 ))}
                             </DroppableCell>
-                        ))}
-                    </React.Fragment>
-                ))}
+                        </React.Fragment>
+                    );
+                })}
             </div>
 
-            {/* DragOverlay renders a clean copy of the card while dragging */}
             <DragOverlay>
-                {activeEpic && (
-                    <EpicCard epic={activeEpic} isDragOverlay />
-                )}
+                {activeEpic && <EpicCard epic={activeEpic} isDragOverlay />}
             </DragOverlay>
         </DndContext>
     );
@@ -413,7 +580,6 @@ function findMatchingFilter(filters, board) {
     return match ? match.id : filters[0].id;
 }
 
-// Cache the context — used for both reading the current board ID and navigating.
 let appContext = null;
 async function getContext() {
     if (!appContext) appContext = await view.getContext();
