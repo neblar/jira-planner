@@ -148,6 +148,27 @@ resolver.define('getEpics', async (req) => {
     });
 });
 
+// Set (or clear) the Focus Area custom field on an epic.
+// Pass value = null to clear it.
+resolver.define('updateEpicFocusArea', async (req) => {
+    const { epicKey, fieldId, value } = req.payload;
+
+    const response = await api
+        .asUser()
+        .requestJira(route`/rest/api/3/issue/${epicKey}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                fields: { [fieldId]: value ? { value } : null },
+            }),
+        });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Jira API error ${response.status}: ${text}`);
+    }
+});
+
 // Update the priority field on an epic in Jira.
 // rowKey matches Jira priority names exactly (Highest, High, Medium, Low, Lowest).
 resolver.define('updateEpicPriority', async (req) => {

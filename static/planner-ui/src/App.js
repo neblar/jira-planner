@@ -349,7 +349,7 @@ function GridSkeleton() {
     );
 }
 
-function EpicCard({ epic, isDragOverlay, row }) {
+function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, onFocusAreaChange }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
         id: epic.key,
         data: { epic },
@@ -359,6 +359,7 @@ function EpicCard({ epic, isDragOverlay, row }) {
     const [children, setChildren] = useState(null);
     const [loading, setLoading] = useState(false);
     const [childError, setChildError] = useState(null);
+    const [savingFocus, setSavingFocus] = useState(false);
 
     function toggle(e) {
         if (isDragging) return;
@@ -370,6 +371,18 @@ function EpicCard({ epic, isDragOverlay, row }) {
                 .catch(err => { setChildError(err.message ?? 'Failed to load'); setLoading(false); });
         }
         setExpanded(prev => !prev);
+    }
+
+    function handleFocusAreaChange(e) {
+        e.stopPropagation();
+        const value = e.target.value || null;
+        setSavingFocus(true);
+        invoke('updateEpicFocusArea', { epicKey: epic.key, fieldId: focusAreaField.fieldId, value })
+            .then(() => {
+                onFocusAreaChange(epic.key, value);
+            })
+            .catch(err => console.error('Failed to update focus area:', err))
+            .finally(() => setSavingFocus(false));
     }
 
     return (
@@ -384,6 +397,32 @@ function EpicCard({ epic, isDragOverlay, row }) {
                 <span style={{ fontSize: 11, color: '#555' }}>{expanded ? '▲' : '▼'}</span>
             </div>
             <div style={{ fontSize: 13, marginTop: 2 }}>{epic.summary}</div>
+
+            {focusAreaField && !isDragOverlay && (
+                <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
+                    <select
+                        value={epic.focusArea ?? ''}
+                        onChange={handleFocusAreaChange}
+                        disabled={savingFocus}
+                        style={{
+                            fontSize: 11,
+                            padding: '1px 3px',
+                            border: '1px solid #ccc',
+                            borderRadius: 3,
+                            background: '#fff',
+                            color: '#555',
+                            cursor: 'pointer',
+                            width: '100%',
+                            opacity: savingFocus ? 0.6 : 1,
+                        }}
+                    >
+                        <option value="">— no focus area —</option>
+                        {focusAreaOptions.map(v => (
+                            <option key={v} value={v}>{v}</option>
+                        ))}
+                    </select>
+                </div>
+            )}
 
             {expanded && !isDragging && (
                 <div style={childIssueStyle}>
@@ -436,7 +475,7 @@ const toggleButtonStyle = {
     color: '#333',
 };
 
-function PlanningGrid({ epics, sprints }) {
+function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocusAreaChange }) {
     const [positions, setPositions] = useState({});
     const [activeEpic, setActiveEpic] = useState(null);
     const [showBacklog, setShowBacklog] = useState(true);
@@ -589,7 +628,7 @@ function PlanningGrid({ epics, sprints }) {
                                                     gridColumn={sp ? `${sp.startIdx + 2} / span ${sp.span}` : '2'}
                                                 >
                                                     {(gridData[row.key][s.id] ?? []).map(epic => (
-                                                        <EpicCard key={epic.key} epic={epic} row={row} />
+                                                        <EpicCard key={epic.key} epic={epic} row={row} focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions} onFocusAreaChange={onFocusAreaChange} />
                                                     ))}
                                                 </DroppableCell>
                                             );
@@ -620,7 +659,7 @@ function PlanningGrid({ epics, sprints }) {
                                 </div>
                                 <DroppableCell id={`${row.key}|backlog`}>
                                     {gridData[row.key].backlog.map(epic => (
-                                        <EpicCard key={epic.key} epic={epic} row={row} />
+                                        <EpicCard key={epic.key} epic={epic} row={row} focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions} onFocusAreaChange={onFocusAreaChange} />
                                     ))}
                                 </DroppableCell>
                             </div>
@@ -794,7 +833,17 @@ function App() {
 
             {!sprints || !visibleEpics
                 ? <GridSkeleton />
-                : <PlanningGrid epics={visibleEpics} sprints={sprints} />
+                : <PlanningGrid
+                    epics={visibleEpics}
+                    sprints={sprints}
+                    focusAreaField={focusAreaField}
+                    focusAreaOptions={focusAreaOptions}
+                    onFocusAreaChange={(epicKey, value) => {
+                        setEpics(prev => prev.map(e =>
+                            e.key === epicKey ? { ...e, focusArea: value } : e
+                        ));
+                    }}
+                />
             }
         </div>
     );
