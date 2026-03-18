@@ -83,3 +83,33 @@ Work through these tasks in order. Find the first unchecked task and implement i
 - [x] **Step 13 — Priority colour coding**
   - Give each priority row (and its cards) a distinct colour: Highest = red, High = orange, Medium = yellow, Low = blue, Lowest = grey
   - Goal: priority is immediately readable at a glance
+
+- [ ] **Step 14 — Sprint dates in column headers**
+  - Extend the `getSprints` resolver to also return `startDate` and `endDate` for each sprint
+  - Update column headers to show the sprint name on one line and the date range beneath it (e.g. "Mar 3 – Mar 14") in a smaller, lighter font
+  - Format dates as short locale strings (day + month, no year unless the year differs from today)
+  - The Backlog column has no dates — leave its header as-is
+  - Goal: columns read like a calendar so sprint boundaries are immediately visible
+
+- [ ] **Step 15 — Open epic in Jira**
+  - Each epic card's key (e.g. T0-123) should be a clickable link that opens the Jira issue in a new tab
+  - Use `router.open()` from `@forge/bridge` to navigate to the issue URL: `/browse/{epicKey}`
+  - Goal: one click from planner card to Jira ticket
+
+- [ ] **Step 16 — Epic status badge**
+  - `getEpics` already fetches the `status` field — surface it on each card as a small inline badge
+  - Show the status category name (To Do / In Progress / Done) rather than the raw workflow status, since status names vary by project
+  - Colour the badge to match the category: To Do = grey, In Progress = blue, Done = green
+  - Goal: workflow state is visible at a glance without opening the ticket
+
+- [ ] **Step 17 — Assignee avatars**
+  - Extend `getEpics` to also fetch the `assignee` field (displayName + avatarUrl)
+  - Render the assignee's avatar as a small (20px) circle in the bottom-right of each card; show their display name in a tooltip on hover
+  - Show a neutral placeholder icon for unassigned epics
+  - Goal: load distribution across team members is visible in the grid
+
+- [ ] **Step 18 — Filter selector fallback**
+  - The board auto-matches a filter by project key in JQL — this covers most cases but can fail if the JQL doesn't contain the key
+  - Add a small secondary `<select>` dropdown next to the board selector that lists all available filters, pre-selected to the auto-matched one
+  - Changing the filter dropdown re-fetches epics using the new filter ID
+  - Goal: users can manually override the filter if auto-matching picks the wrong one
