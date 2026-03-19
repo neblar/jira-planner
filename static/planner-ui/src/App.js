@@ -429,13 +429,105 @@ function GridSkeleton() {
 }
 
 
-function EpicCard({ epic, isDragOverlay, row, cellId }) {
+function EpicDetailModal({ epic, onClose }) {
+    const [children, setChildren] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [childError, setChildError] = useState(null);
+
+    useEffect(() => {
+        fetchChildIssues(epic.key)
+            .then(issues => { setChildren(issues); setLoading(false); })
+            .catch(err => { setChildError(err.message ?? 'Failed to load'); setLoading(false); });
+    }, [epic.key]);
+
+    useEffect(() => {
+        function onKey(e) { if (e.key === 'Escape') onClose(); }
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    return (
+        <>
+            {/* Backdrop */}
+            <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(9,30,66,0.4)', zIndex: 200 }} />
+
+            {/* Modal — position:fixed escapes grid overflow */}
+            <div style={{
+                position: 'fixed', top: '50%', left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: 620, maxHeight: '80vh',
+                background: '#fff', borderRadius: 8,
+                boxShadow: '0 8px 32px rgba(9,30,66,0.25)',
+                zIndex: 201, display: 'flex', flexDirection: 'column',
+                overflow: 'hidden',
+            }}>
+                {/* Header */}
+                <div style={{ padding: '16px 20px 14px', borderBottom: '1px solid #EBECF0', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                            {epic.project && (
+                                epic.project.avatarUrl
+                                    ? <img src={epic.project.avatarUrl} title={epic.project.name} style={{ width: 16, height: 16, borderRadius: 2 }} alt={epic.project.name} />
+                                    : <span title={epic.project.name} style={{ width: 16, height: 16, borderRadius: 2, background: '#0052cc', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', fontWeight: 'bold' }}>{epic.project.key[0]}</span>
+                            )}
+                            <span
+                                style={{ fontSize: 12, fontWeight: 700, color: '#0052cc', cursor: 'pointer', textDecoration: 'underline' }}
+                                onClick={() => router.open(`/browse/${epic.key}`)}
+                            >
+                                {epic.key}
+                            </span>
+                            {epic.project && (
+                                <span style={{ fontSize: 12, color: '#6B778C' }}>{epic.project.name}</span>
+                            )}
+                        </div>
+                        <div style={{ fontSize: 18, fontWeight: 600, color: '#172B4D', lineHeight: 1.3 }}>
+                            {epic.summary}
+                        </div>
+                        {epic.assignee && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                                <img src={epic.assignee.avatarUrl} title={epic.assignee.displayName} style={{ width: 20, height: 20, borderRadius: '50%' }} alt={epic.assignee.displayName} />
+                                <span style={{ fontSize: 12, color: '#42526E' }}>{epic.assignee.displayName}</span>
+                            </div>
+                        )}
+                    </div>
+                    <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6B778C', padding: '0 2px', lineHeight: 1, flexShrink: 0 }}>✕</button>
+                </div>
+
+                {/* Body */}
+                <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: '#172B4D', marginBottom: 10 }}>Child Issues</div>
+                    {loading && <div style={{ fontSize: 13, color: '#888' }}>Loading…</div>}
+                    {childError && <div style={{ fontSize: 13, color: '#c9372c' }}>{childError}</div>}
+                    {children && children.length === 0 && (
+                        <div style={{ fontSize: 13, color: '#888' }}>No open child issues.</div>
+                    )}
+                    {children && children.map(issue => (
+                        <div key={issue.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 0', borderBottom: '1px solid #F4F5F7' }}>
+                            {issue.assignee
+                                ? <img src={issue.assignee.avatarUrl} title={issue.assignee.displayName} style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0, marginTop: 1 }} alt={issue.assignee.displayName} />
+                                : <span title="Unassigned" style={{ width: 22, height: 22, borderRadius: '50%', background: '#DFE1E6', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#97A0AF', flexShrink: 0, marginTop: 1 }}>?</span>
+                            }
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                    <span style={{ fontWeight: 700, fontSize: 11, color: '#42526E' }}>{issue.key}</span>
+                                    {issue.statusCategory && <span style={{ ...statusBadgeStyle(issue.statusCategory), marginLeft: 0 }}>{issue.statusCategory}</span>}
+                                </div>
+                                <div style={{ fontSize: 13, color: '#172B4D', lineHeight: 1.4 }}>{issue.summary}</div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </>
+    );
+}
+
+function EpicCard({ epic, isDragOverlay, row, cellId, onExpand }) {
     const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
         id: epic.key,
         data: { epic, cellId },
     });
 
-    // Card-level droppable for within-cell reordering (not needed in overlay)
     const { setNodeRef: setDropRef, isOver: isDropOver } = useDroppable({
         id: isDragOverlay ? `card-overlay:${epic.key}` : `card:${epic.key}`,
         data: { cellId },
@@ -443,23 +535,6 @@ function EpicCard({ epic, isDragOverlay, row, cellId }) {
     });
 
     const setRef = (el) => { setDragRef(el); setDropRef(el); };
-
-    const [expanded, setExpanded] = useState(false);
-    const [children, setChildren] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [childError, setChildError] = useState(null);
-
-    function toggle(e) {
-        if (isDragging) return;
-        e.stopPropagation();
-        if (!expanded && children === null) {
-            setLoading(true);
-            fetchChildIssues(epic.key)
-                .then(issues => { setChildren(issues); setLoading(false); })
-                .catch(err => { setChildError(err.message ?? 'Failed to load'); setLoading(false); });
-        }
-        setExpanded(prev => !prev);
-    }
 
     return (
         <div
@@ -471,7 +546,7 @@ function EpicCard({ epic, isDragOverlay, row, cellId }) {
             {...listeners}
             {...attributes}
         >
-            <div style={cardHeaderStyle} onClick={toggle}>
+            <div style={cardHeaderStyle}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     {epic.project && (
                         epic.project.avatarUrl
@@ -484,57 +559,25 @@ function EpicCard({ epic, isDragOverlay, row, cellId }) {
                     >
                         {epic.key}
                     </span>
-
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {!isDragOverlay && (
                         epic.assignee
-                            ? (
-                                <img
-                                    src={epic.assignee.avatarUrl}
-                                    title={epic.assignee.displayName}
-                                    style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0 }}
-                                    alt={epic.assignee.displayName}
-                                />
-                            ) : (
-                                <span
-                                    title="Unassigned"
-                                    style={{ width: 20, height: 20, borderRadius: '50%', background: '#ddd', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#999', flexShrink: 0 }}
-                                >
-                                    ?
-                                </span>
-                            )
+                            ? <img src={epic.assignee.avatarUrl} title={epic.assignee.displayName} style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0 }} alt={epic.assignee.displayName} />
+                            : <span title="Unassigned" style={{ width: 20, height: 20, borderRadius: '50%', background: '#ddd', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#999', flexShrink: 0 }}>?</span>
                     )}
-                    <span style={{ fontSize: 11, color: '#555' }}>{expanded ? '▲' : '▼'}</span>
+                    {!isDragOverlay && onExpand && (
+                        <span
+                            title="Open detail"
+                            onClick={e => { e.stopPropagation(); onExpand(epic); }}
+                            style={{ fontSize: 12, color: '#97A0AF', cursor: 'pointer', lineHeight: 1, padding: '0 1px', userSelect: 'none' }}
+                        >
+                            ⤢
+                        </span>
+                    )}
                 </span>
             </div>
             <div style={{ fontSize: 13, marginTop: 2 }}>{epic.summary}</div>
-
-
-            {expanded && !isDragging && (
-                <div style={childIssueStyle}>
-                    {loading && <div style={{ fontSize: 12, color: '#888' }}>Loading...</div>}
-                    {childError && <div style={{ fontSize: 12, color: 'red' }}>{childError}</div>}
-                    {children && children.length === 0 && (
-                        <div style={{ fontSize: 12, color: '#888' }}>No open issues</div>
-                    )}
-                    {children && children.map(issue => (
-                        <div key={issue.key} style={childItemStyle}>
-                            {issue.assignee
-                                ? <img src={issue.assignee.avatarUrl} title={issue.assignee.displayName} style={{ width: 16, height: 16, borderRadius: '50%', flexShrink: 0, marginTop: 1 }} alt={issue.assignee.displayName} />
-                                : <span title="Unassigned" style={{ width: 16, height: 16, borderRadius: '50%', background: '#ddd', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#999', flexShrink: 0, marginTop: 1 }}>?</span>
-                            }
-                            <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                    <span style={childKeyStyle}>{issue.key}</span>
-                                    {issue.statusCategory && <span style={{ ...statusBadgeStyle(issue.statusCategory), marginLeft: 0 }}>{issue.statusCategory}</span>}
-                                </span>
-                                <span style={{ color: '#555', lineHeight: 1.3 }}>{issue.summary}</span>
-                            </span>
-                        </div>
-                    ))}
-                </div>
-            )}
         </div>
     );
 }
@@ -586,6 +629,7 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
     const [showBacklog, setShowBacklog] = useState(true);
     const [collapsedSections, setCollapsedSections] = useState(new Set());
     const [localCellOrders, setLocalCellOrders] = useState({});
+    const [expandedEpic, setExpandedEpic] = useState(null);
     const scrollRef = useRef(null);
 
     function toggleSection(key) {
@@ -774,7 +818,8 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                     >
                                         {(gridData[section.key]?.[row.key]?.[s.id] ?? []).map(epic => (
                                             <EpicCard key={epic.key} epic={epic} row={row}
-                                                cellId={`${section.key}|${row.key}|${s.id}`} />
+                                                cellId={`${section.key}|${row.key}|${s.id}`}
+                                                onExpand={setExpandedEpic} />
                                         ))}
                                     </DroppableCell>
                                 );
@@ -913,7 +958,8 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                             <DroppableCell id={`${section.key}|${row.key}|backlog`}>
                                                 {(gridData[section.key]?.[row.key]?.backlog ?? []).map(epic => (
                                                     <EpicCard key={epic.key} epic={epic} row={row}
-                                                        cellId={`${section.key}|${row.key}|backlog`} />
+                                                        cellId={`${section.key}|${row.key}|backlog`}
+                                                        onExpand={setExpandedEpic} />
                                                 ))}
                                             </DroppableCell>
                                         </div>
@@ -928,6 +974,10 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
             <DragOverlay>
                 {activeEpic && <EpicCard epic={activeEpic} isDragOverlay />}
             </DragOverlay>
+
+            {expandedEpic && (
+                <EpicDetailModal epic={expandedEpic} onClose={() => setExpandedEpic(null)} />
+            )}
         </DndContext>
     );
 }
