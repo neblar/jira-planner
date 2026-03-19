@@ -1,50 +1,79 @@
-# Forge Hello World
+# Super Planner — Jira Epic Planning Grid
 
-This project contains a Forge app written in JavaScript that displays `Hello World!` in a Jira full page module.
+> **Disclaimer:** This project is vibecoded — the vast majority of the application logic, UI, and features were built through AI-assisted development. The Jira Forge scaffolding (app registration, manifest setup, devcontainer, initial project structure) was set up manually to get things off the ground.
 
-See [developer.atlassian.com/platform/forge/](https://developer.atlassian.com/platform/forge) for documentation and tutorials explaining Forge.
+A sprint-based planning grid for Jira epics, built as an Atlassian Forge full-page app. Gives a cross-project calendar view of all epics with drag-and-drop planning, priority rows, Focus Area grouping, and an epic detail modal.
 
-See [Jira full page](https://developer.atlassian.com/platform/forge/manifest-reference/modules/jira-full-page/) for
-information on how to use this module. 
+## Features
 
-## Requirements
+- **Calendar-style grid** — columns are real sprints laid out across a Quarter → Month → Day → Sprint header; auto-scrolls to the active sprint on load
+- **Drag-and-drop** — move epics between sprint columns and priority rows; persists sprint assignment and priority back to Jira
+- **Within-cell reordering** — drag epics within a cell to reorder; uses Jira's native LexoRank so order is consistent with the Timeline view
+- **Backlog panel** — collapsible side panel showing unplanned epics grouped by priority; drag in/out of the grid
+- **Focus Area tabs** — groups epics by a custom Jira Select field ("Focus Area"); manage options (add/delete/reorder) without leaving the app
+- **Priority filter** — toggle chips to hide/show entire priority rows
+- **Project filter** — client-side filter to narrow the view to a single project
+- **Epic detail modal** — progress bar, sprint/assignee pickers per child ticket, clickable issue keys, Mark as Done button
+- **Persistent state** — board and filter selection stored in URL query params for bookmarking
 
-See [Set up Forge](https://developer.atlassian.com/platform/forge/set-up-forge/) for instructions to get set up.
+## Tech stack
 
-## Quick start
-- Install top-level dependencies:
+- **Platform:** Atlassian Forge (Custom UI, `jira:fullPage`)
+- **Backend:** Node.js resolvers (`src/index.js`) calling Jira REST APIs
+- **Frontend:** React (`static/planner-ui/src/App.js`) with `@dnd-kit` for drag-and-drop
+- **Deployment:** GitHub Actions on push to `main`
+
+## Project structure
+
 ```
+src/index.js                  # Forge resolvers (backend)
+static/planner-ui/src/App.js  # React app (frontend)
+manifest.yml                  # Forge app manifest
+.github/workflows/deploy.yml  # CI/CD — auto-deploy to production
+```
+
+## Local development
+
+Install dependencies:
+```bash
 npm install
+cd static/planner-ui && npm install
 ```
 
-- Install dependencies (inside of the `static/planner-ui` directory):
-```
-npm install
-```
-
-- Modify your app by editing the files in `static/planner-ui/src/`.
-
-- Build your app (inside of the `static/planner-ui` directory):
-```
-npm run build
+Build the frontend:
+```bash
+cd static/planner-ui && npm run build
 ```
 
-- Deploy your app by running:
-```
-forge deploy
-```
-
-- Install your app in an Atlassian site by running:
-```
-forge install
+Deploy manually:
+```bash
+forge deploy -e production
 ```
 
-### Notes
-- Use the `forge deploy` command when you want to persist code changes.
-- Use the `forge install` command when you want to install the app on a new site.
-- Once the app is installed on a site, the site picks up the new app changes you deploy without needing to rerun the install command.
+Tunnel for local development (connects to a live Jira site):
+```bash
+forge tunnel
+```
 
-## Support
+## CI/CD
 
-See [Get help](https://developer.atlassian.com/platform/forge/get-help/) for how to get help and provide feedback.
+Pushes to `main` automatically build and deploy to production via GitHub Actions.
 
+Requires two repository secrets (**Settings → Secrets and variables → Actions**):
+
+| Secret | Value |
+|---|---|
+| `FORGE_EMAIL` | Your Atlassian account email |
+| `FORGE_API_TOKEN` | API token from [id.atlassian.com](https://id.atlassian.com) → Security → API tokens |
+
+## Jira permissions required
+
+The app requests the following OAuth scopes (see `manifest.yml`):
+
+- `read:jira-work`, `write:jira-work` — read/update epics, priorities, sprints
+- `read:jira-user` — assignee display names and avatars
+- `read:sprint:jira-software`, `write:sprint:jira-software` — sprint assignment
+- `read:board-scope:jira-software`, `write:board-scope:jira-software` — board/sprint discovery
+- `read:issue-details:jira`, `read:project:jira` — issue fields and project metadata
+- `manage:jira-configuration` — managing Focus Area custom field options
+- `write:issue:jira-software` — LexoRank reordering via the Jira Agile rank API
