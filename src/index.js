@@ -126,6 +126,29 @@ resolver.define('addFocusAreaOption', async (req) => {
     return { id: created.id, value: created.value };
 });
 
+// Move a Focus Area option to a new position within its context.
+// position: 'First' | 'Last' | 'Before' | 'After'
+// afterId: required when position is 'Before' or 'After' — the reference option ID.
+resolver.define('reorderFocusAreaOption', async (req) => {
+    const { fieldId, contextId, optionId, position, afterId } = req.payload;
+
+    const body = { customFieldOptionIds: [optionId], position };
+    if (afterId) body.after = { id: afterId };
+
+    const response = await api
+        .asUser()
+        .requestJira(route`/rest/api/3/field/${fieldId}/context/${contextId}/option/move`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Jira API error ${response.status}: ${text}`);
+    }
+});
+
 // Delete an option from the Focus Area field context.
 resolver.define('deleteFocusAreaOption', async (req) => {
     const { fieldId, contextId, optionId } = req.payload;

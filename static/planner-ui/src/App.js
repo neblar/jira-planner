@@ -9,7 +9,15 @@ import {
     useDroppable,
     useDraggable,
     DragOverlay,
+    closestCenter,
 } from '@dnd-kit/core';
+import {
+    SortableContext,
+    useSortable,
+    verticalListSortingStrategy,
+    arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS as DNDCSS } from '@dnd-kit/utilities';
 
 const ROWS = [
     { key: 'Highest', label: 'Highest', color: '#c9372c', bg: '#ffecea', cardBg: '#ffd5d2', cardBorder: '#f5a19b' },
@@ -567,7 +575,16 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
     const [positions, setPositions] = useState({});
     const [activeEpic, setActiveEpic] = useState(null);
     const [showBacklog, setShowBacklog] = useState(true);
+    const [collapsedSections, setCollapsedSections] = useState(new Set());
     const scrollRef = useRef(null);
+
+    function toggleSection(key) {
+        setCollapsedSections(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            return next;
+        });
+    }
 
     const sensors = useSensors(
         useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
@@ -643,36 +660,52 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
     );
 
     function renderSection(section, si) {
-        const baseRow     = HEADER_ROWS + 1 + si * rowsPerSection;
+        const baseRow      = HEADER_ROWS + 1 + si * rowsPerSection;
         const dataStartRow = baseRow + (hasSections ? 1 : 0);
+        const collapsed    = collapsedSections.has(section.key);
+        const epicCount    = ROWS.reduce((n, row) =>
+            n + Object.values(gridData[section.key]?.[row.key] ?? {}).reduce((m, arr) => m + arr.length, 0), 0);
         return (
             <React.Fragment key={section.key}>
                 {/* Section header row */}
                 {hasSections && (
                     <>
-                        <div style={{
-                            gridRow: baseRow, gridColumn: 1,
-                            background: '#e8eaf0',
-                            borderTop: si > 0 ? '2px solid #bbb' : 'none',
-                            borderBottom: '1px solid #ccc',
-                            borderRight: '1px solid #ccc',
-                            padding: '5px 12px',
-                            fontWeight: 'bold', fontSize: 13, color: '#333',
-                            position: 'sticky', left: 0, zIndex: 1,
-                        }}>
+                        <div
+                            onClick={() => toggleSection(section.key)}
+                            style={{
+                                gridRow: baseRow, gridColumn: 1,
+                                background: '#e8eaf0',
+                                borderTop: si > 0 ? '2px solid #bbb' : 'none',
+                                borderBottom: '1px solid #ccc',
+                                borderRight: '1px solid #ccc',
+                                padding: '5px 12px',
+                                fontWeight: 'bold', fontSize: 13, color: '#333',
+                                position: 'sticky', left: 0, zIndex: 1,
+                                cursor: 'pointer', userSelect: 'none',
+                                display: 'flex', alignItems: 'center', gap: 6,
+                            }}
+                        >
+                            <span style={{ fontSize: 10 }}>{collapsed ? '▶' : '▼'}</span>
                             {section.label}
+                            {collapsed && epicCount > 0 && (
+                                <span style={{ fontSize: 11, fontWeight: 'normal', color: '#666' }}>({epicCount})</span>
+                            )}
                         </div>
-                        <div style={{
-                            gridRow: baseRow, gridColumn: `2 / span ${numDays}`,
-                            background: '#e8eaf0',
-                            borderTop: si > 0 ? '2px solid #bbb' : 'none',
-                            borderBottom: '1px solid #ccc',
-                        }} />
+                        <div
+                            onClick={() => toggleSection(section.key)}
+                            style={{
+                                gridRow: baseRow, gridColumn: `2 / span ${numDays}`,
+                                background: '#e8eaf0',
+                                borderTop: si > 0 ? '2px solid #bbb' : 'none',
+                                borderBottom: '1px solid #ccc',
+                                cursor: 'pointer',
+                            }}
+                        />
                     </>
                 )}
 
-                {/* Priority rows */}
-                {ROWS.map((row, ri) => {
+                {/* Priority rows — not rendered when collapsed; empty auto rows collapse to 0 height */}
+                {!collapsed && ROWS.map((row, ri) => {
                     const dataRow = dataStartRow + ri;
                     return (
                         <React.Fragment key={row.key}>
@@ -797,34 +830,47 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                             <span>Backlog {backlogCount > 0 && `(${backlogCount})`}</span>
                             <button style={toggleButtonStyle} onClick={() => setShowBacklog(false)}>✕ Hide</button>
                         </div>
-                        {sections.map((section, si) => (
-                            <div key={section.key}>
-                                {hasSections && (
-                                    <div style={{
-                                        padding: '4px 10px', fontSize: 12, fontWeight: 'bold',
-                                        background: '#e8eaf0',
-                                        borderTop: si > 0 ? '1px solid #ccc' : 'none',
-                                        borderBottom: '1px solid #ccc', color: '#333',
-                                    }}>
-                                        {section.label}
-                                    </div>
-                                )}
-                                {ROWS.map(row => (
-                                    <div key={row.key}>
-                                        <div style={{ ...rowLabelStyle(row), borderRight: 'none', borderBottom: 'none', paddingTop: 8, paddingBottom: 4 }}>
-                                            {row.label}
+                        {sections.map((section, si) => {
+                            const collapsed = collapsedSections.has(section.key);
+                            const backlogCount = ROWS.reduce((n, row) => n + (gridData[section.key]?.[row.key]?.backlog.length ?? 0), 0);
+                            return (
+                                <div key={section.key}>
+                                    {hasSections && (
+                                        <div
+                                            onClick={() => toggleSection(section.key)}
+                                            style={{
+                                                padding: '4px 10px', fontSize: 12, fontWeight: 'bold',
+                                                background: '#e8eaf0',
+                                                borderTop: si > 0 ? '1px solid #ccc' : 'none',
+                                                borderBottom: '1px solid #ccc', color: '#333',
+                                                cursor: 'pointer', userSelect: 'none',
+                                                display: 'flex', alignItems: 'center', gap: 5,
+                                            }}
+                                        >
+                                            <span style={{ fontSize: 10 }}>{collapsed ? '▶' : '▼'}</span>
+                                            {section.label}
+                                            {collapsed && backlogCount > 0 && (
+                                                <span style={{ fontWeight: 'normal', color: '#666' }}>({backlogCount})</span>
+                                            )}
                                         </div>
-                                        <DroppableCell id={`${section.key}|${row.key}|backlog`}>
-                                            {(gridData[section.key]?.[row.key]?.backlog ?? []).map(epic => (
-                                                <EpicCard key={epic.key} epic={epic} row={row}
-                                                    focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions}
-                                                    onFocusAreaChange={onFocusAreaChange} progress={epicProgress?.[epic.key] ?? null} />
-                                            ))}
-                                        </DroppableCell>
-                                    </div>
-                                ))}
-                            </div>
-                        ))}
+                                    )}
+                                    {!collapsed && ROWS.map(row => (
+                                        <div key={row.key}>
+                                            <div style={{ ...rowLabelStyle(row), borderRight: 'none', borderBottom: 'none', paddingTop: 8, paddingBottom: 4 }}>
+                                                {row.label}
+                                            </div>
+                                            <DroppableCell id={`${section.key}|${row.key}|backlog`}>
+                                                {(gridData[section.key]?.[row.key]?.backlog ?? []).map(epic => (
+                                                    <EpicCard key={epic.key} epic={epic} row={row}
+                                                        focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions}
+                                                        onFocusAreaChange={onFocusAreaChange} progress={epicProgress?.[epic.key] ?? null} />
+                                                ))}
+                                            </DroppableCell>
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
             </div>
@@ -896,6 +942,44 @@ const settingsOptionRowStyle = {
     fontSize: 13,
 };
 
+function SortableOptionRow({ opt, epics, deletingId, onDelete }) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: opt.id });
+    const inUse = (epics ?? []).filter(e => e.focusArea === opt.value).length;
+    return (
+        <div
+            ref={setNodeRef}
+            style={{
+                ...settingsOptionRowStyle,
+                transform: DNDCSS.Transform.toString(transform),
+                transition,
+                opacity: isDragging ? 0.4 : 1,
+                background: isDragging ? '#f4f5f7' : undefined,
+            }}
+        >
+            <span
+                {...listeners}
+                {...attributes}
+                title="Drag to reorder"
+                style={{ cursor: 'grab', color: '#aaa', fontSize: 14, padding: '0 4px 0 0', lineHeight: 1 }}
+            >
+                ⠿
+            </span>
+            <span style={{ flex: 1 }}>
+                {opt.value}
+                {inUse > 0 && <span style={{ marginLeft: 6, fontSize: 11, color: '#888' }}>({inUse})</span>}
+            </span>
+            <button
+                onClick={() => onDelete(opt)}
+                disabled={!!deletingId}
+                style={{ background: 'none', border: 'none', color: '#c9372c', cursor: 'pointer', fontSize: 13, padding: '0 4px' }}
+                title="Delete option"
+            >
+                {deletingId === opt.id ? '…' : '✕'}
+            </button>
+        </div>
+    );
+}
+
 function FocusAreaSettings({ focusAreaField, epics, onFieldChange }) {
     const [open, setOpen] = useState(false);
     const [newValue, setNewValue] = useState('');
@@ -903,6 +987,11 @@ function FocusAreaSettings({ focusAreaField, epics, onFieldChange }) {
     const [deletingId, setDeletingId] = useState(null);
     const [localError, setLocalError] = useState(null);
     const wrapperRef = useRef(null);
+
+    const sortSensors = useSensors(
+        useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+        useSensor(TouchSensor, { activationConstraint: { distance: 5 } }),
+    );
 
     // Close panel on outside click
     useEffect(() => {
@@ -913,6 +1002,37 @@ function FocusAreaSettings({ focusAreaField, epics, onFieldChange }) {
         document.addEventListener('mousedown', handleClick);
         return () => document.removeEventListener('mousedown', handleClick);
     }, [open]);
+
+    function handleSortEnd({ active, over }) {
+        if (!over || active.id === over.id) return;
+        const opts = focusAreaField.options;
+        const oldIndex = opts.findIndex(o => o.id === active.id);
+        const newIndex = opts.findIndex(o => o.id === over.id);
+        const reordered = arrayMove(opts, oldIndex, newIndex);
+
+        // Optimistic update
+        onFieldChange(prev => ({ ...prev, options: reordered }));
+
+        // Determine Jira position args (First / After <id>)
+        let position, afterId;
+        if (newIndex === 0) {
+            position = 'First'; afterId = null;
+        } else {
+            position = 'After';
+            afterId  = reordered[newIndex - 1].id;
+        }
+
+        invoke('reorderFocusAreaOption', {
+            fieldId: focusAreaField.fieldId,
+            contextId: focusAreaField.contextId,
+            optionId: active.id,
+            position,
+            afterId,
+        }).catch(err => {
+            onFieldChange(prev => ({ ...prev, options: opts })); // roll back
+            setLocalError(err.message ?? 'Failed to reorder option');
+        });
+    }
 
     function handleAdd() {
         const value = newValue.trim();
@@ -925,10 +1045,7 @@ function FocusAreaSettings({ focusAreaField, epics, onFieldChange }) {
             value,
         })
             .then(created => {
-                onFieldChange(prev => ({
-                    ...prev,
-                    options: [...prev.options, created],
-                }));
+                onFieldChange(prev => ({ ...prev, options: [...prev.options, created] }));
                 setNewValue('');
             })
             .catch(err => setLocalError(err.message ?? 'Failed to add option'))
@@ -937,12 +1054,7 @@ function FocusAreaSettings({ focusAreaField, epics, onFieldChange }) {
 
     function handleDelete(opt) {
         const inUse = (epics ?? []).filter(e => e.focusArea === opt.value).length;
-        if (inUse > 0) {
-            const ok = window.confirm(
-                `"${opt.value}" is used by ${inUse} epic${inUse > 1 ? 's' : ''}. Delete anyway?`
-            );
-            if (!ok) return;
-        }
+        if (inUse > 0 && !window.confirm(`"${opt.value}" is used by ${inUse} epic${inUse > 1 ? 's' : ''}. Delete anyway?`)) return;
         setDeletingId(opt.id);
         setLocalError(null);
         invoke('deleteFocusAreaOption', {
@@ -950,12 +1062,7 @@ function FocusAreaSettings({ focusAreaField, epics, onFieldChange }) {
             contextId: focusAreaField.contextId,
             optionId: opt.id,
         })
-            .then(() => {
-                onFieldChange(prev => ({
-                    ...prev,
-                    options: prev.options.filter(o => o.id !== opt.id),
-                }));
-            })
+            .then(() => onFieldChange(prev => ({ ...prev, options: prev.options.filter(o => o.id !== opt.id) })))
             .catch(err => setLocalError(err.message ?? 'Failed to delete option'))
             .finally(() => setDeletingId(null));
     }
@@ -975,22 +1082,19 @@ function FocusAreaSettings({ focusAreaField, epics, onFieldChange }) {
                     {focusAreaField.options.length === 0 && (
                         <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>No options yet.</div>
                     )}
-                    {focusAreaField.options.map(opt => {
-                        const inUse = (epics ?? []).filter(e => e.focusArea === opt.value).length;
-                        return (
-                            <div key={opt.id} style={settingsOptionRowStyle}>
-                                <span>{opt.value}{inUse > 0 && <span style={{ marginLeft: 6, fontSize: 11, color: '#888' }}>({inUse})</span>}</span>
-                                <button
-                                    onClick={() => handleDelete(opt)}
-                                    disabled={!!deletingId}
-                                    style={{ background: 'none', border: 'none', color: '#c9372c', cursor: 'pointer', fontSize: 13, padding: '0 4px' }}
-                                    title="Delete option"
-                                >
-                                    {deletingId === opt.id ? '…' : '✕'}
-                                </button>
-                            </div>
-                        );
-                    })}
+                    <DndContext sensors={sortSensors} collisionDetection={closestCenter} onDragEnd={handleSortEnd}>
+                        <SortableContext items={focusAreaField.options.map(o => o.id)} strategy={verticalListSortingStrategy}>
+                            {focusAreaField.options.map(opt => (
+                                <SortableOptionRow
+                                    key={opt.id}
+                                    opt={opt}
+                                    epics={epics}
+                                    deletingId={deletingId}
+                                    onDelete={handleDelete}
+                                />
+                            ))}
+                        </SortableContext>
+                    </DndContext>
                     <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                         <input
                             type="text"
