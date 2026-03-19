@@ -124,7 +124,8 @@ function getPriorityRow(priority) {
 }
 
 // grid[sectionKey][rowKey][colId] = [epics]
-function buildGridData(epics, sprints, positions, sections) {
+// localCellOrders: session-only override { [cellId]: [epicKey, ...] } for immediate feedback after drags
+function buildGridData(epics, sprints, positions, sections, localCellOrders) {
     const grid = {};
     for (const section of sections) {
         grid[section.key] = {};
@@ -145,6 +146,36 @@ function buildGridData(epics, sprints, positions, sections) {
             (row[colId] ?? row.backlog).push(epic);
         } else {
             row.backlog.push(epic);
+        }
+    }
+    // Sort each cell by Jira rank (LexoRank strings sort lexicographically)
+    for (const secKey in grid) {
+        for (const rowKey in grid[secKey]) {
+            for (const colId in grid[secKey][rowKey]) {
+                const cell = grid[secKey][rowKey][colId];
+                const cellId = `${secKey}|${rowKey}|${colId}`;
+                const localOrder = localCellOrders?.[cellId];
+                if (localOrder?.length) {
+                    // Session override: apply local ordering (filter stale keys, unknowns go to end)
+                    const validKeys = new Set(cell.map(e => e.key));
+                    const filtered = localOrder.filter(k => validKeys.has(k));
+                    cell.sort((a, b) => {
+                        const ai = filtered.indexOf(a.key);
+                        const bi = filtered.indexOf(b.key);
+                        if (ai === -1 && bi === -1) return 0;
+                        if (ai === -1) return 1;
+                        if (bi === -1) return -1;
+                        return ai - bi;
+                    });
+                } else {
+                    // Default: sort by Jira rank
+                    cell.sort((a, b) => {
+                        if (!a.rank) return 1;
+                        if (!b.rank) return -1;
+                        return a.rank < b.rank ? -1 : a.rank > b.rank ? 1 : 0;
+                    });
+                }
+            }
         }
     }
     return grid;
@@ -410,11 +441,20 @@ function ProgressBar({ total, done }) {
     );
 }
 
-function EpicCard({ epic, isDragOverlay, row, focusAreaField, onFocusAreaChange, progress }) {
-    const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+function EpicCard({ epic, isDragOverlay, row, focusAreaField, onFocusAreaChange, progress, cellId }) {
+    const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
         id: epic.key,
-        data: { epic },
+        data: { epic, cellId },
     });
+
+    // Card-level droppable for within-cell reordering (not needed in overlay)
+    const { setNodeRef: setDropRef, isOver: isDropOver } = useDroppable({
+        id: isDragOverlay ? `card-overlay:${epic.key}` : `card:${epic.key}`,
+        data: { cellId },
+        disabled: isDragOverlay,
+    });
+
+    const setRef = (el) => { setDragRef(el); setDropRef(el); };
 
     const [expanded, setExpanded] = useState(false);
     const [children, setChildren] = useState(null);
@@ -435,13 +475,21 @@ function EpicCard({ epic, isDragOverlay, row, focusAreaField, onFocusAreaChange,
 
     return (
         <div
-            ref={setNodeRef}
-            style={cardStyle(isDragging && !isDragOverlay, row)}
+            ref={setRef}
+            style={{
+                ...cardStyle(isDragging && !isDragOverlay, row),
+                borderTop: isDropOver && !isDragging ? '2px solid #4c8cf5' : undefined,
+            }}
             {...listeners}
             {...attributes}
         >
             <div style={cardHeaderStyle} onClick={toggle}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {epic.project && (
+                        epic.project.avatarUrl
+                            ? <img src={epic.project.avatarUrl} title={epic.project.name} style={{ width: 14, height: 14, borderRadius: 2, flexShrink: 0 }} alt={epic.project.name} />
+                            : <span title={epic.project.name} style={{ width: 14, height: 14, borderRadius: 2, background: '#0052cc', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: '#fff', fontWeight: 'bold', flexShrink: 0 }}>{epic.project.key[0]}</span>
+                    )}
                     <span
                         style={{ ...cardKeyStyle, cursor: 'pointer', textDecoration: 'underline' }}
                         onClick={e => { e.stopPropagation(); router.open(`/browse/${epic.key}`); }}
@@ -554,6 +602,7 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
     const [activeEpic, setActiveEpic] = useState(null);
     const [showBacklog, setShowBacklog] = useState(true);
     const [collapsedSections, setCollapsedSections] = useState(new Set());
+    const [localCellOrders, setLocalCellOrders] = useState({});
     const scrollRef = useRef(null);
 
     function toggleSection(key) {
@@ -584,7 +633,7 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
         ? [...focusAreaOptions.map(v => ({ key: v, label: v })), { key: UNASSIGNED_KEY, label: 'No Focus Area' }]
         : [{ key: UNASSIGNED_KEY, label: null }];
 
-    const gridData = buildGridData(epics, sprints, positions, sections);
+    const gridData = buildGridData(epics, sprints, positions, sections, localCellOrders);
 
     const HEADER_ROWS = 4;
     const rowsPerSection = ROWS.length + (hasSections ? 1 : 0); // section header row + 5 priority rows
@@ -603,34 +652,74 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
         setActiveEpic(epics.find(e => e.key === active.id) ?? null);
     }
 
-    function handleDragEnd({ active, over }) {
-        setActiveEpic(null);
-        if (!over) return;
-        const [sectionKey, rowKey, colId] = over.id.split('|');
-
-        setPositions(prev => ({ ...prev, [active.id]: { rowKey, colId } }));
+    function handleCrossCellDrop(activeId, sectionKey, rowKey, colId) {
+        setPositions(prev => ({ ...prev, [activeId]: { rowKey, colId } }));
 
         const sprintId = colId === BACKLOG_COLUMN.id ? null : Number(colId);
-        invoke('assignEpicToSprint', { epicKey: active.id, sprintId })
+        invoke('assignEpicToSprint', { epicKey: activeId, sprintId })
             .catch(err => console.error('Failed to assign sprint:', err));
-        invoke('updateEpicPriority', { epicKey: active.id, priority: rowKey })
+        invoke('updateEpicPriority', { epicKey: activeId, priority: rowKey })
             .catch(err => console.error('Failed to update priority:', err));
 
-        // Update focus area when the epic crosses into a different section
         if (focusAreaField) {
-            const epic = epics.find(e => e.key === active.id);
+            const epic = epics.find(e => e.key === activeId);
             const currentKey = epic?.focusArea ?? UNASSIGNED_KEY;
             if (sectionKey !== currentKey) {
                 const newFocusArea = sectionKey === UNASSIGNED_KEY ? null : sectionKey;
                 const option = focusAreaField.options.find(o => o.value === sectionKey);
-                onFocusAreaChange(active.id, newFocusArea);
+                onFocusAreaChange(activeId, newFocusArea);
                 invoke('updateEpicFocusArea', {
-                    epicKey: active.id,
+                    epicKey: activeId,
                     fieldId: focusAreaField.fieldId,
                     optionId: option?.id ?? null,
                 }).catch(err => console.error('Failed to update focus area:', err));
             }
         }
+    }
+
+    function handleDragEnd({ active, over }) {
+        setActiveEpic(null);
+        if (!over) return;
+
+        // Card-level drop: within-cell reorder or cross-cell via card target
+        if (over.id.startsWith('card:')) {
+            const targetKey = over.id.slice(5);
+            const sourceCellId = active.data.current?.cellId;
+            const targetCellId = over.data.current?.cellId;
+
+            if (!sourceCellId || !targetCellId) return;
+
+            if (sourceCellId === targetCellId) {
+                // Same cell — reorder using Jira rank
+                const [secKey, rowKey, colId] = sourceCellId.split('|');
+                const cellEpics = gridData[secKey]?.[rowKey]?.[colId] ?? [];
+                const keys = cellEpics.map(e => e.key);
+                const oldIdx = keys.indexOf(active.id);
+                const newIdx = keys.indexOf(targetKey);
+                if (oldIdx === -1 || newIdx === -1 || oldIdx === newIdx) return;
+                const reordered = arrayMove(keys, oldIdx, newIdx);
+                // Optimistic local update for immediate feedback
+                setLocalCellOrders(prev => ({ ...prev, [sourceCellId]: reordered }));
+                // Persist via Jira rank API — same as Timeline view ranking
+                const rankPayload = { epicKey: active.id };
+                if (newIdx === 0) {
+                    rankPayload.rankBeforeIssue = reordered[1];
+                } else {
+                    rankPayload.rankAfterIssue = reordered[newIdx - 1];
+                }
+                invoke('rankEpic', rankPayload)
+                    .catch(err => console.error('Failed to rank epic:', err));
+            } else {
+                // Different cell — treat as a cross-cell move into targetCellId
+                const [sectionKey, rowKey, colId] = targetCellId.split('|');
+                handleCrossCellDrop(active.id, sectionKey, rowKey, colId);
+            }
+            return;
+        }
+
+        // Cell-level drop (empty cell or cell background)
+        const [sectionKey, rowKey, colId] = over.id.split('|');
+        handleCrossCellDrop(active.id, sectionKey, rowKey, colId);
     }
 
     const gridTemplateColumns = `120px repeat(${numDays}, ${DAY_COL_WIDTH}px)`;
@@ -702,6 +791,7 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                     >
                                         {(gridData[section.key]?.[row.key]?.[s.id] ?? []).map(epic => (
                                             <EpicCard key={epic.key} epic={epic} row={row}
+                                                cellId={`${section.key}|${row.key}|${s.id}`}
                                                 onFocusAreaChange={onFocusAreaChange} progress={epicProgress?.[epic.key] ?? null} />
                                         ))}
                                     </DroppableCell>
@@ -841,6 +931,7 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                             <DroppableCell id={`${section.key}|${row.key}|backlog`}>
                                                 {(gridData[section.key]?.[row.key]?.backlog ?? []).map(epic => (
                                                     <EpicCard key={epic.key} epic={epic} row={row}
+                                                        cellId={`${section.key}|${row.key}|backlog`}
                                                         onFocusAreaChange={onFocusAreaChange} progress={epicProgress?.[epic.key] ?? null} />
                                                 ))}
                                             </DroppableCell>
@@ -1047,7 +1138,7 @@ function FocusAreaSettings({ focusAreaField, epics, onFieldChange }) {
     }
 
     return (
-        <div ref={wrapperRef} style={{ position: 'relative', alignSelf: 'flex-end', marginBottom: 2 }}>
+        <div ref={wrapperRef} style={{ position: 'relative', alignSelf: 'center' }}>
             <button
                 onClick={() => setOpen(o => !o)}
                 title="Manage Focus Area options"

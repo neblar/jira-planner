@@ -195,7 +195,8 @@ resolver.define('getFilters', async () => {
 resolver.define('getEpics', async (req) => {
     const { filterId, focusAreaFieldId, boardSprintIds } = req.payload;
 
-    const fields = ['summary', 'priority', 'status', 'assignee', 'customfield_10020'];
+    // customfield_10019 = Jira rank (LexoRank) — used to sort epics within a cell
+    const fields = ['summary', 'priority', 'status', 'assignee', 'customfield_10020', 'customfield_10019', 'project'];
     if (focusAreaFieldId) fields.push(focusAreaFieldId);
 
     const response = await api
@@ -244,6 +245,10 @@ resolver.define('getEpics', async (req) => {
             // sprintId is null when the epic has no sprint on this board → goes to backlog
             sprintId: activeSprint ? String(activeSprint.id) : null,
             focusArea,
+            rank: issue.fields.customfield_10019 ?? null,
+            project: issue.fields.project
+                ? { key: issue.fields.project.key, name: issue.fields.project.name, avatarUrl: issue.fields.project.avatarUrls?.['16x16'] ?? null }
+                : null,
         };
     });
 });
@@ -370,6 +375,30 @@ resolver.define('assignEpicToSprint', async (req) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ issues: [epicKey] }),
+        });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Jira API error ${response.status}: ${text}`);
+    }
+});
+
+// Rank an epic relative to another using the Jira Agile rank API.
+// Pass rankBeforeIssue to place epicKey immediately before that issue,
+// or rankAfterIssue to place it immediately after.
+resolver.define('rankEpic', async (req) => {
+    const { epicKey, rankBeforeIssue, rankAfterIssue } = req.payload;
+
+    const body = { issues: [epicKey] };
+    if (rankBeforeIssue) body.rankBeforeIssue = rankBeforeIssue;
+    else if (rankAfterIssue) body.rankAfterIssue = rankAfterIssue;
+
+    const response = await api
+        .asUser()
+        .requestJira(route`/rest/agile/1.0/issue/rank`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
         });
 
     if (!response.ok) {
