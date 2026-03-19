@@ -153,16 +153,23 @@ function buildGridData(epics, sprints, positions, sections) {
 // --- Jira fetch ---
 
 async function fetchChildIssues(epicKey) {
-    const jql = encodeURIComponent(
-        `"Epic Link" = ${epicKey} AND statusCategory != Done ORDER BY created DESC`
-    );
-    const res = await requestJira(
-        `/rest/api/3/search/jql?jql=${jql}&fields=summary&maxResults=50`
-    );
+    const res = await requestJira('/rest/api/3/search/jql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            jql: `issueType != Epic AND (parent = "${epicKey}" OR "Epic Link" = "${epicKey}") AND statusCategory != Done ORDER BY created DESC`,
+            fields: ['summary', 'status', 'assignee'],
+            maxResults: 50,
+        }),
+    });
     const data = await res.json();
     return (data.issues ?? []).map(issue => ({
         key: issue.key,
         summary: issue.fields.summary,
+        statusCategory: issue.fields.status?.statusCategory?.name ?? null,
+        assignee: issue.fields.assignee
+            ? { displayName: issue.fields.assignee.displayName, avatarUrl: issue.fields.assignee.avatarUrls?.['16x16'] ?? null }
+            : null,
     }));
 }
 
@@ -262,14 +269,18 @@ function statusBadgeStyle(category) {
 
 const childItemStyle = {
     fontSize: 12,
-    padding: '2px 0',
+    padding: '3px 0',
     color: '#333',
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 5,
 };
 
 const childKeyStyle = {
     fontWeight: 'bold',
     color: '#555',
-    marginRight: 4,
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
 };
 
 // Shared base for all calendar header cells
@@ -399,7 +410,7 @@ function ProgressBar({ total, done }) {
     );
 }
 
-function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, onFocusAreaChange, progress }) {
+function EpicCard({ epic, isDragOverlay, row, focusAreaField, onFocusAreaChange, progress }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
         id: epic.key,
         data: { epic },
@@ -409,7 +420,6 @@ function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, 
     const [children, setChildren] = useState(null);
     const [loading, setLoading] = useState(false);
     const [childError, setChildError] = useState(null);
-    const [savingFocus, setSavingFocus] = useState(false);
 
     function toggle(e) {
         if (isDragging) return;
@@ -421,18 +431,6 @@ function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, 
                 .catch(err => { setChildError(err.message ?? 'Failed to load'); setLoading(false); });
         }
         setExpanded(prev => !prev);
-    }
-
-    function handleFocusAreaChange(e) {
-        e.stopPropagation();
-        const value = e.target.value || null;
-        setSavingFocus(true);
-        invoke('updateEpicFocusArea', { epicKey: epic.key, fieldId: focusAreaField.fieldId, value })
-            .then(() => {
-                onFocusAreaChange(epic.key, value);
-            })
-            .catch(err => console.error('Failed to update focus area:', err))
-            .finally(() => setSavingFocus(false));
     }
 
     return (
@@ -485,31 +483,6 @@ function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, 
                 <ProgressBar total={progress.total} done={progress.done} />
             )}
 
-            {focusAreaField && !isDragOverlay && (
-                <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
-                    <select
-                        value={epic.focusArea ?? ''}
-                        onChange={handleFocusAreaChange}
-                        disabled={savingFocus}
-                        style={{
-                            fontSize: 11,
-                            padding: '1px 3px',
-                            border: '1px solid #ccc',
-                            borderRadius: 3,
-                            background: '#fff',
-                            color: '#555',
-                            cursor: 'pointer',
-                            width: '100%',
-                            opacity: savingFocus ? 0.6 : 1,
-                        }}
-                    >
-                        <option value="">— no focus area —</option>
-                        {focusAreaOptions.map(v => (
-                            <option key={v} value={v}>{v}</option>
-                        ))}
-                    </select>
-                </div>
-            )}
 
             {expanded && !isDragging && (
                 <div style={childIssueStyle}>
@@ -520,8 +493,18 @@ function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, 
                     )}
                     {children && children.map(issue => (
                         <div key={issue.key} style={childItemStyle}>
-                            <span style={childKeyStyle}>{issue.key}</span>
-                            {issue.summary}
+                            {/* Assignee avatar */}
+                            {issue.assignee
+                                ? <img src={issue.assignee.avatarUrl} title={issue.assignee.displayName} style={{ width: 16, height: 16, borderRadius: '50%', flexShrink: 0, marginTop: 1 }} alt={issue.assignee.displayName} />
+                                : <span title="Unassigned" style={{ width: 16, height: 16, borderRadius: '50%', background: '#ddd', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#999', flexShrink: 0, marginTop: 1 }}>?</span>
+                            }
+                            <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={childKeyStyle}>{issue.key}</span>
+                                    {issue.statusCategory && <span style={{ ...statusBadgeStyle(issue.statusCategory), marginLeft: 0 }}>{issue.statusCategory}</span>}
+                                </span>
+                                <span style={{ color: '#555', lineHeight: 1.3 }}>{issue.summary}</span>
+                            </span>
                         </div>
                     ))}
                 </div>
@@ -530,7 +513,7 @@ function EpicCard({ epic, isDragOverlay, row, focusAreaField, focusAreaOptions, 
     );
 }
 
-const DAY_COL_WIDTH = 24; // px per day column
+const DAY_COL_WIDTH = 30; // px per day column
 
 // Explicit heights for the 4 calendar header rows — used for gridTemplateRows and sticky top values.
 const HDR_Q = 24; // quarter
@@ -723,7 +706,6 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                     >
                                         {(gridData[section.key]?.[row.key]?.[s.id] ?? []).map(epic => (
                                             <EpicCard key={epic.key} epic={epic} row={row}
-                                                focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions}
                                                 onFocusAreaChange={onFocusAreaChange} progress={epicProgress?.[epic.key] ?? null} />
                                         ))}
                                     </DroppableCell>
@@ -862,7 +844,6 @@ function PlanningGrid({ epics, sprints, focusAreaField, focusAreaOptions, onFocu
                                             <DroppableCell id={`${section.key}|${row.key}|backlog`}>
                                                 {(gridData[section.key]?.[row.key]?.backlog ?? []).map(epic => (
                                                     <EpicCard key={epic.key} epic={epic} row={row}
-                                                        focusAreaField={focusAreaField} focusAreaOptions={focusAreaOptions}
                                                         onFocusAreaChange={onFocusAreaChange} progress={epicProgress?.[epic.key] ?? null} />
                                                 ))}
                                             </DroppableCell>
