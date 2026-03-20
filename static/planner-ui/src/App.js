@@ -303,7 +303,7 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
         ])
             .then(([issues, users, trans]) => {
                 setChildren(issues);
-                setAssignableUsers(users ?? []);
+                setAssignableUsers((users ?? []).sort((a, b) => a.displayName.localeCompare(b.displayName)));
                 setTransitions(trans ?? []);
                 setLoading(false);
             })
@@ -555,10 +555,12 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
                                                 overflow: 'hidden',
                                                 border: '1px solid #DFE1E6',
                                             }}>
-                                                <div style={{ padding: '6px 12px 4px', fontSize: 11, fontWeight: 700, color: '#6B778C', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #F4F5F7' }}>
-                                                    Move to
-                                                </div>
-                                                {transitions.map(t => {
+                                                {[...transitions].sort((a, b) => {
+                                                    const order = { new: 0, indeterminate: 1, done: 2 };
+                                                    const ao = order[a.categoryKey] ?? 3;
+                                                    const bo = order[b.categoryKey] ?? 3;
+                                                    return ao !== bo ? ao - bo : a.name.localeCompare(b.name);
+                                                }).map(t => {
                                                     const ts = statusStyle(t.categoryKey);
                                                     return (
                                                         <div
