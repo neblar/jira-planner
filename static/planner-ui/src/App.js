@@ -784,6 +784,7 @@ function EpicCard({ epic, isDragOverlay, row, cellId, onExpand }) {
 }
 
 const DAY_COL_WIDTH = 30; // px per day column
+const COLLAPSED_SPRINT_WIDTH = 36;
 
 // Explicit heights for the 4 calendar header rows — used for gridTemplateRows and sticky top values.
 const HDR_Q = 24; // quarter
@@ -824,6 +825,67 @@ const toggleButtonStyle = {
     color: '#333',
 };
 
+function computeColumnLayout(sprints, sprintSpans, numDays, collapsedSprints) {
+    // dayIndex → sprintId
+    const dayToSprintId = {};
+    for (const s of sprints) {
+        const sp = sprintSpans[s.id];
+        if (!sp) continue;
+        for (let i = sp.startIdx; i < sp.startIdx + sp.span; i++) dayToSprintId[i] = s.id;
+    }
+    const widths = [];
+    const dayToCol = {}; // dayIndex → 1-based col index within widths
+    const collapsedSeen = new Set();
+    let col = 1;
+    for (let i = 0; i < numDays; i++) {
+        const sid = dayToSprintId[i];
+        if (sid && collapsedSprints.has(sid)) {
+            if (!collapsedSeen.has(sid)) {
+                widths.push(`${COLLAPSED_SPRINT_WIDTH}px`);
+                dayToCol[i] = col++;
+                collapsedSeen.add(sid);
+            }
+            // non-first days of collapsed sprint: no column, not added to dayToCol
+        } else {
+            widths.push(`${DAY_COL_WIDTH}px`);
+            dayToCol[i] = col++;
+        }
+    }
+    // derive grid position for each sprint
+    const sprintGridPos = {};
+    for (const s of sprints) {
+        const sp = sprintSpans[s.id];
+        if (!sp) continue;
+        if (collapsedSprints.has(s.id)) {
+            const c = dayToCol[sp.startIdx];
+            if (c != null) sprintGridPos[s.id] = { col: c, span: 1 };
+        } else {
+            let minCol = Infinity, maxCol = -Infinity;
+            for (let i = sp.startIdx; i < sp.startIdx + sp.span; i++) {
+                const c = dayToCol[i];
+                if (c != null) { minCol = Math.min(minCol, c); maxCol = Math.max(maxCol, c); }
+            }
+            if (minCol !== Infinity) sprintGridPos[s.id] = { col: minCol, span: maxCol - minCol + 1 };
+        }
+    }
+    return {
+        templateCols: `120px ${widths.join(' ')}`,
+        dayToCol,
+        sprintGridPos,
+        totalCols: col - 1,
+    };
+}
+
+function groupToGridPos(group, dayToCol) {
+    let minCol = Infinity, maxCol = -Infinity;
+    for (let i = group.startIdx; i < group.startIdx + group.span; i++) {
+        const c = dayToCol[i];
+        if (c != null) { minCol = Math.min(minCol, c); maxCol = Math.max(maxCol, c); }
+    }
+    if (minCol === Infinity) return null;
+    return { col: minCol, span: maxCol - minCol + 1 };
+}
+
 function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focusAreaOptions, onFocusAreaChange, onEpicDone }) {
     const visibleRows = ROWS.filter(r => selectedPriorities.has(r.key));
     const [positions, setPositions] = useState({});
@@ -832,7 +894,16 @@ function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focu
     const [collapsedSections, setCollapsedSections] = useState(new Set());
     const [localCellOrders, setLocalCellOrders] = useState({});
     const [expandedEpic, setExpandedEpic] = useState(null);
+    const [collapsedSprints, setCollapsedSprints] = useState(new Set());
     const scrollRef = useRef(null);
+
+    function toggleSprintCollapse(id) {
+        setCollapsedSprints(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    }
 
     function toggleSection(key) {
         setCollapsedSections(prev => {
@@ -867,14 +938,16 @@ function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focu
     const HEADER_ROWS = 4;
     const rowsPerSection = visibleRows.length + (hasSections ? 1 : 0); // section header row + priority rows
 
+    const colLayout = computeColumnLayout(sprints, sprintSpans, numDays, collapsedSprints);
+
     // Scroll to active sprint on first render
     useEffect(() => {
         if (!scrollRef.current || !days.length) return;
         const active = sprints.find(s => s.state === 'active');
         if (!active) return;
-        const sp = sprintSpans[active.id];
-        if (!sp) return;
-        scrollRef.current.scrollLeft = Math.max(0, sp.startIdx * DAY_COL_WIDTH - 20);
+        const pos = colLayout.sprintGridPos[active.id];
+        if (!pos) return;
+        scrollRef.current.scrollLeft = Math.max(0, (pos.col - 1) * DAY_COL_WIDTH - 20);
     }, [sprints, days.length]);
 
     function handleDragStart({ active }) {
@@ -951,7 +1024,7 @@ function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focu
         handleCrossCellDrop(active.id, sectionKey, rowKey, colId);
     }
 
-    const gridTemplateColumns = `120px repeat(${numDays}, ${DAY_COL_WIDTH}px)`;
+    const gridTemplateColumns = colLayout.templateCols;
     const backlogCount = sections.reduce(
         (n, sec) => n + visibleRows.reduce((m, row) => m + (gridData[sec.key]?.[row.key]?.backlog.length ?? 0), 0), 0
     );
@@ -991,7 +1064,7 @@ function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focu
                         <div
                             onClick={() => toggleSection(section.key)}
                             style={{
-                                gridRow: baseRow, gridColumn: `2 / span ${numDays}`,
+                                gridRow: baseRow, gridColumn: `2 / span ${colLayout.totalCols}`,
                                 background: '#e8eaf0',
                                 borderTop: si > 0 ? '2px solid #bbb' : 'none',
                                 borderBottom: '1px solid #ccc',
@@ -1010,13 +1083,29 @@ function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focu
                                 {row.label}
                             </div>
                             {sprints.map(s => {
-                                const sp = sprintSpans[s.id];
+                                const pos = colLayout.sprintGridPos[s.id];
+                                const gridCol = pos ? `${pos.col + 1} / span ${pos.span}` : '2';
+                                const isCollapsed = collapsedSprints.has(s.id);
+                                if (isCollapsed) {
+                                    const count = (gridData[section.key]?.[row.key]?.[s.id] ?? []).length;
+                                    return (
+                                        <div key={s.id} style={{
+                                            gridRow: dataRow, gridColumn: pos ? `${pos.col + 1}` : '2',
+                                            borderBottom: '1px solid #eee', borderRight: '1px solid #eee',
+                                            background: '#fafafa',
+                                            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                                            paddingTop: 6, minHeight: 80,
+                                        }}>
+                                            {count > 0 && <span style={{ fontSize: 9, fontWeight: 600, color: '#bbb' }}>{count}</span>}
+                                        </div>
+                                    );
+                                }
                                 return (
                                     <DroppableCell
                                         key={s.id}
                                         id={`${section.key}|${row.key}|${s.id}`}
                                         gridRow={dataRow}
-                                        gridColumn={sp ? `${sp.startIdx + 2} / span ${sp.span}` : '2'}
+                                        gridColumn={gridCol}
                                     >
                                         {(gridData[section.key]?.[row.key]?.[s.id] ?? []).map(epic => (
                                             <EpicCard key={epic.key} epic={epic} row={row}
@@ -1062,31 +1151,41 @@ function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focu
                     <div style={cornerStyle} />
 
                     {/* Row 1 — Quarters (sticky top) */}
-                    {quarterGroups.map((q, i) => (
-                        <div key={i} style={quarterCellStyle({
-                            gridRow: 1, gridColumn: `${q.startIdx + 2} / span ${q.span}`,
-                            position: 'sticky', top: 0, zIndex: 2,
-                        })}>
-                            {q.label}
-                        </div>
-                    ))}
+                    {quarterGroups.map((q, i) => {
+                        const pos = groupToGridPos(q, colLayout.dayToCol);
+                        if (!pos) return null;
+                        return (
+                            <div key={i} style={quarterCellStyle({
+                                gridRow: 1, gridColumn: `${pos.col + 1} / span ${pos.span}`,
+                                position: 'sticky', top: 0, zIndex: 2,
+                            })}>
+                                {q.label}
+                            </div>
+                        );
+                    })}
 
                     {/* Row 2 — Months (sticky top) */}
-                    {monthGroups.map((m, i) => (
-                        <div key={i} style={monthCellStyle({
-                            gridRow: 2, gridColumn: `${m.startIdx + 2} / span ${m.span}`,
-                            position: 'sticky', top: HDR_TOP_M, zIndex: 2,
-                        })}>
-                            {m.label}
-                        </div>
-                    ))}
+                    {monthGroups.map((m, i) => {
+                        const pos = groupToGridPos(m, colLayout.dayToCol);
+                        if (!pos) return null;
+                        return (
+                            <div key={i} style={monthCellStyle({
+                                gridRow: 2, gridColumn: `${pos.col + 1} / span ${pos.span}`,
+                                position: 'sticky', top: HDR_TOP_M, zIndex: 2,
+                            })}>
+                                {m.label}
+                            </div>
+                        );
+                    })}
 
                     {/* Row 3 — Day ticks (sticky top) */}
                     {days.map((d, i) => {
+                        const col = colLayout.dayToCol[i];
+                        if (col == null) return null; // collapsed sprint interior day
                         const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                         return (
                             <div key={i} style={{
-                                ...dayCellStyle, gridRow: 3, gridColumn: i + 2,
+                                ...dayCellStyle, gridRow: 3, gridColumn: col + 1,
                                 background: isWeekend ? '#e8e9ec' : '#f4f5f7',
                                 color: isWeekend ? '#aaa' : '#888',
                                 position: 'sticky', top: HDR_TOP_D, zIndex: 2,
@@ -1098,14 +1197,31 @@ function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focu
 
                     {/* Row 4 — Sprint names (sticky top) */}
                     {sprints.map(s => {
-                        const sp = sprintSpans[s.id];
+                        const pos = colLayout.sprintGridPos[s.id];
+                        const isCollapsed = collapsedSprints.has(s.id);
+                        const gridCol = pos ? `${pos.col + 1} / span ${pos.span}` : '2';
                         return (
-                            <div key={s.id} style={sprintCellStyle(s.state === 'active', {
-                                gridRow: 4, gridColumn: sp ? `${sp.startIdx + 2} / span ${sp.span}` : '2',
-                                position: 'sticky', top: HDR_TOP_S, zIndex: 2,
-                            })}>
-                                {s.name}
-                                {s.state === 'active' && <span style={{ fontSize: 10, fontWeight: 'normal', marginLeft: 4 }}>· active</span>}
+                            <div
+                                key={s.id}
+                                onClick={() => toggleSprintCollapse(s.id)}
+                                title={isCollapsed ? `${s.name} (collapsed — click to expand)` : 'Click to collapse'}
+                                style={sprintCellStyle(s.state === 'active', {
+                                    gridRow: 4, gridColumn: gridCol,
+                                    position: 'sticky', top: HDR_TOP_S, zIndex: 2,
+                                    cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center',
+                                    overflow: 'hidden',
+                                    justifyContent: isCollapsed ? 'center' : undefined,
+                                })}
+                            >
+                                {isCollapsed
+                                    ? <span style={{ fontSize: 9, color: '#888', writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)', whiteSpace: 'nowrap', overflow: 'hidden', maxHeight: 60 }}>▶ {s.name}</span>
+                                    : <>
+                                        {s.name}
+                                        {s.state === 'active' && <span style={{ fontSize: 10, fontWeight: 'normal', marginLeft: 4 }}>· active</span>}
+                                        <span style={{ fontSize: 9, marginLeft: 'auto', opacity: 0.4, flexShrink: 0 }}>‹</span>
+                                      </>
+                                }
                             </div>
                         );
                     })}
@@ -1470,6 +1586,7 @@ function App() {
     const [epics, setEpics] = useState(null);
     const [focusAreaField, setFocusAreaField] = useState(undefined); // undefined = loading, null = not found
     const [error, setError] = useState(null);
+    const [epicRefreshKey, setEpicRefreshKey] = useState(0);
 
     function togglePriority(key) {
         setSelectedPriorities(prev => {
@@ -1518,7 +1635,7 @@ function App() {
         invoke('getEpics', { filterId: selectedFilter, focusAreaFieldId, boardSprintIds })
             .then(data => setEpics(data))
             .catch(err => setError(err.message ?? 'Failed to load epics'));
-    }, [selectedFilter, focusAreaFieldId, sprints]);
+    }, [selectedFilter, focusAreaFieldId, sprints, epicRefreshKey]);
 
     function handleBoardChange(boardId) {
         const board = boards?.find(b => String(b.id) === String(boardId));
@@ -1658,6 +1775,19 @@ function App() {
                         onFieldChange={setFocusAreaField}
                     />
                 )}
+                <button
+                    onClick={() => setEpicRefreshKey(k => k + 1)}
+                    disabled={!sprints || !epics}
+                    title="Refresh epics"
+                    style={{
+                        background: 'none', border: '1px solid #DFE1E6', borderRadius: 4,
+                        padding: '4px 8px', cursor: (!sprints || !epics) ? 'default' : 'pointer',
+                        fontSize: 14, color: '#42526E', lineHeight: 1,
+                        opacity: (!sprints || !epics) ? 0.5 : 1,
+                    }}
+                >
+                    ↻
+                </button>
             </div>
 
             {/* Grid area — overflow:hidden lets the grid div inside be the sole scroll container */}

@@ -8,21 +8,7 @@ Before starting any task, read `AGENTS.md` for project conventions and critical 
 
 ## Backlog
 
-No pending tasks. See "Future Ideas" below for potential next steps.
-
----
-
-## Future Ideas
-
-These are not prioritised — just captured for reference.
-
-- **Refresh button** — re-fetch epics without a full page reload
-- **Epic create** — create a new epic directly from the planner (sets sprint + priority on creation)
-- **Assignee filter** — toolbar chip to show only epics assigned to a specific person
-- **Sprint column collapse** — collapse past sprints to reclaim horizontal space
-- **Keyboard shortcuts** — e.g. `B` to toggle backlog, `Esc` to close modal
-- **Multi-select drag** — select several epics and move them together
-- **Epic notes/description** — show/edit the epic description field in the detail modal
+No pending tasks.
 
 ---
 
@@ -60,10 +46,13 @@ These are not prioritised — just captured for reference.
 - [x] **Modal Step 2** — Sprint label on child tickets
 - [x] **Modal Step 3** — Sprint + assignee picker per child ticket
 - [x] **Modal Step 4** — Child ticket keys clickable to open in Jira
-- [x] **Modal Step 5** — Mark epic Done from modal
+- [x] **Modal Step 5** — Jira-style status selector on epic and child tickets
 - [x] **Post-launch** — Priority filter chips in toolbar
 - [x] **Post-launch** — Year shown in Quarter and Month calendar headers
 - [x] **Post-launch** — Paginate `getEpics` (was silently capped at 100 by Jira API)
 - [x] **Post-launch** — GitHub Actions CI/CD (auto-deploy main to production)
+- [x] **Post-launch** — Comprehensive test suite (112 tests across backend resolvers + frontend utils + App smoke tests)
+- [x] **Post-launch** — Refresh button in toolbar (re-fetches epics without page reload)
+- [x] **Post-launch** — Sprint column collapse (click sprint header to collapse; reclaims horizontal space)
 
 </details>
