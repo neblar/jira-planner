@@ -382,7 +382,7 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
         invoke('transitionEpicDone', { epicKey: epic.key, transitionId: transition.id })
             .then(() => {
                 setEpicStatus({ name: transition.name, categoryKey: transition.categoryKey });
-                onEpicDone(epic.key);
+                if (transition.categoryKey === 'done') onEpicDone(epic.key);
             })
             .catch(err => setTransitionError(err.message ?? 'Transition failed'))
             .finally(() => setTransitioning(false));
