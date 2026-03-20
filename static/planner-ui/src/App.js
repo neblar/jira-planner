@@ -894,7 +894,9 @@ function PlanningGrid({ epics, sprints, selectedPriorities, focusAreaField, focu
     const [collapsedSections, setCollapsedSections] = useState(new Set());
     const [localCellOrders, setLocalCellOrders] = useState({});
     const [expandedEpic, setExpandedEpic] = useState(null);
-    const [collapsedSprints, setCollapsedSprints] = useState(new Set());
+    const [collapsedSprints, setCollapsedSprints] = useState(() =>
+        new Set(sprints.filter(s => s.state === 'closed').map(s => s.id))
+    );
     const scrollRef = useRef(null);
 
     function toggleSprintCollapse(id) {
