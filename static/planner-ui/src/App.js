@@ -47,6 +47,8 @@ async function fetchChildIssues(epicKey) {
         return {
             key: issue.key,
             summary: issue.fields.summary,
+            statusName: issue.fields.status?.name ?? null,
+            statusCategoryKey: issue.fields.status?.statusCategory?.key ?? null,
             statusCategory: issue.fields.status?.statusCategory?.name ?? null,
             assignee: issue.fields.assignee
                 ? { accountId: issue.fields.assignee.accountId, displayName: issue.fields.assignee.displayName, avatarUrl: issue.fields.assignee.avatarUrls?.['24x24'] ?? null }
@@ -292,6 +294,8 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
     const [transitions, setTransitions] = useState(null); // null = loading, [{id,name,categoryKey}]
     const [epicStatus, setEpicStatus] = useState(epic.status ?? null); // { name, categoryKey }
     const [statusOpen, setStatusOpen] = useState(false);
+    const [childStatusOpen, setChildStatusOpen] = useState(null); // issueKey of open popover
+    const [childTransitions, setChildTransitions] = useState({}); // { [issueKey]: [{id,name,categoryKey}] }
     // { key: issueKey, field: 'sprint' | 'assignee' } — which chip is being edited
     const [editing, setEditing] = useState(null);
 
@@ -347,6 +351,28 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
                 ));
             })
             .catch(err => console.error('[SuperPlanner] Assignee update failed:', err));
+    }
+
+    function openChildStatus(issueKey) {
+        setChildStatusOpen(issueKey);
+        if (!childTransitions[issueKey]) {
+            invoke('getTransitions', { epicKey: issueKey })
+                .then(trans => setChildTransitions(prev => ({ ...prev, [issueKey]: (trans ?? []).sort((a, b) => {
+                    const order = { new: 0, indeterminate: 1, done: 2 };
+                    const ao = order[a.categoryKey] ?? 3, bo = order[b.categoryKey] ?? 3;
+                    return ao !== bo ? ao - bo : a.name.localeCompare(b.name);
+                }) })))
+                .catch(() => {});
+        }
+    }
+
+    function handleChildTransition(issueKey, transition) {
+        setChildStatusOpen(null);
+        invoke('transitionEpicDone', { epicKey: issueKey, transitionId: transition.id })
+            .then(() => setChildren(prev => prev.map(c =>
+                c.key === issueKey ? { ...c, statusName: transition.name, statusCategoryKey: transition.categoryKey, statusCategory: transition.name } : c
+            )))
+            .catch(err => console.error('[SuperPlanner] Child transition failed:', err));
     }
 
     function handleTransition(transition) {
@@ -411,7 +437,63 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
                             >
                                 {issue.key}
                             </span>
-                            {issue.statusCategory && <span style={{ ...statusBadgeStyle(issue.statusCategory), marginLeft: 0 }}>{issue.statusCategory}</span>}
+                            {issue.statusName && (() => {
+                                const st = statusStyle(issue.statusCategoryKey);
+                                const isOpen = childStatusOpen === issue.key;
+                                const trans = childTransitions[issue.key];
+                                return (
+                                    <div style={{ position: 'relative', display: 'inline-block' }}>
+                                        <button
+                                            onClick={() => isOpen ? setChildStatusOpen(null) : openChildStatus(issue.key)}
+                                            style={{
+                                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                                padding: '2px 7px', borderRadius: 3, border: 'none',
+                                                background: st.bg, color: st.color,
+                                                fontSize: 11, fontWeight: 700, letterSpacing: '0.02em', textTransform: 'uppercase',
+                                                cursor: 'pointer', whiteSpace: 'nowrap',
+                                            }}
+                                        >
+                                            {issue.statusName}
+                                            <span style={{ fontSize: 8, opacity: 0.7 }}>▼</span>
+                                        </button>
+                                        {isOpen && (
+                                            <>
+                                                <div onClick={() => setChildStatusOpen(null)} style={{ position: 'fixed', inset: 0, zIndex: 299 }} />
+                                                <div style={{
+                                                    position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+                                                    background: '#fff', borderRadius: 4,
+                                                    boxShadow: '0 4px 16px rgba(9,30,66,0.2)',
+                                                    minWidth: 160, zIndex: 300,
+                                                    overflow: 'hidden', border: '1px solid #DFE1E6',
+                                                }}>
+                                                    {!trans
+                                                        ? <div style={{ padding: '8px 12px', fontSize: 12, color: '#6B778C' }}>Loading…</div>
+                                                        : trans.map(t => {
+                                                            const ts = statusStyle(t.categoryKey);
+                                                            return (
+                                                                <div
+                                                                    key={t.id}
+                                                                    onClick={() => handleChildTransition(issue.key, t)}
+                                                                    style={{ display: 'flex', alignItems: 'center', padding: '7px 10px', cursor: 'pointer', transition: 'background 0.1s' }}
+                                                                    onMouseEnter={e => e.currentTarget.style.background = '#F4F5F7'}
+                                                                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                                                >
+                                                                    <span style={{
+                                                                        padding: '2px 7px', borderRadius: 3,
+                                                                        background: ts.bg, color: ts.color,
+                                                                        fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.02em',
+                                                                        whiteSpace: 'nowrap',
+                                                                    }}>{t.name}</span>
+                                                                </div>
+                                                            );
+                                                        })
+                                                    }
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                );
+                            })()}
                         </div>
 
                         {/* Summary */}
