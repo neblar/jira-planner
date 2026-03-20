@@ -196,7 +196,7 @@ resolver.define('getEpics', async (req) => {
     const { filterId, focusAreaFieldId, boardSprintIds } = req.payload;
 
     // customfield_10019 = Jira rank (LexoRank) — used to sort epics within a cell
-    const fields = ['summary', 'priority', 'assignee', 'customfield_10020', 'customfield_10019', 'project'];
+    const fields = ['summary', 'priority', 'assignee', 'customfield_10020', 'customfield_10019', 'project', 'status'];
     if (focusAreaFieldId) fields.push(focusAreaFieldId);
 
     const jql = `filter = ${filterId} AND issuetype = Epic AND statusCategory != Done ORDER BY created DESC`;
@@ -257,6 +257,9 @@ resolver.define('getEpics', async (req) => {
             rank: issue.fields.customfield_10019 ?? null,
             project: issue.fields.project
                 ? { key: issue.fields.project.key, name: issue.fields.project.name, avatarUrl: issue.fields.project.avatarUrls?.['16x16'] ?? null }
+                : null,
+            status: issue.fields.status
+                ? { name: issue.fields.status.name, categoryKey: issue.fields.status.statusCategory?.key ?? null }
                 : null,
         };
     });
@@ -404,7 +407,11 @@ resolver.define('getTransitions', async (req) => {
         throw new Error(`Jira API error ${transRes.status}: ${text}`);
     }
     const { transitions } = await transRes.json();
-    return transitions.map(t => ({ id: t.id, name: t.name }));
+    return transitions.map(t => ({
+        id: t.id,
+        name: t.name,
+        categoryKey: t.to?.statusCategory?.key ?? null,
+    }));
 });
 
 resolver.define('transitionEpicDone', async (req) => {

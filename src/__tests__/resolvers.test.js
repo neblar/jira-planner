@@ -572,8 +572,8 @@ describe('getTransitions', () => {
         }));
         const result = await call('getTransitions', { epicKey: 'NH-1' });
         expect(result).toHaveLength(3);
-        expect(result[0]).toEqual({ id: '11', name: 'In Progress' });
-        expect(result[2]).toEqual({ id: '32', name: 'Closed' });
+        expect(result[0]).toEqual({ id: '11', name: 'In Progress', categoryKey: 'indeterminate' });
+        expect(result[2]).toEqual({ id: '32', name: 'Closed', categoryKey: 'done' });
     });
 
     test('returns empty array when no transitions exist', async () => {

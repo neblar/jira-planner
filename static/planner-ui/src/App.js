@@ -289,7 +289,9 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
     const [assignableUsers, setAssignableUsers] = useState([]);
     const [transitioning, setTransitioning] = useState(false);
     const [transitionError, setTransitionError] = useState(null);
-    const [transitions, setTransitions] = useState(null); // null = loading, [{id,name}] = options
+    const [transitions, setTransitions] = useState(null); // null = loading, [{id,name,categoryKey}]
+    const [epicStatus, setEpicStatus] = useState(epic.status ?? null); // { name, categoryKey }
+    const [statusOpen, setStatusOpen] = useState(false);
     // { key: issueKey, field: 'sprint' | 'assignee' } — which chip is being edited
     const [editing, setEditing] = useState(null);
 
@@ -347,14 +349,26 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
             .catch(err => console.error('[SuperPlanner] Assignee update failed:', err));
     }
 
-    function handleTransition(transitionId) {
-        if (!transitionId) return;
+    function handleTransition(transition) {
+        setStatusOpen(false);
         setTransitioning(true);
         setTransitionError(null);
-        invoke('transitionEpicDone', { epicKey: epic.key, transitionId })
-            .then(() => onEpicDone(epic.key))
+        invoke('transitionEpicDone', { epicKey: epic.key, transitionId: transition.id })
+            .then(() => {
+                setEpicStatus({ name: transition.name, categoryKey: transition.categoryKey });
+                onEpicDone(epic.key);
+            })
             .catch(err => setTransitionError(err.message ?? 'Transition failed'))
             .finally(() => setTransitioning(false));
+    }
+
+    const STATUS_CATEGORY_STYLES = {
+        new:           { bg: '#DFE1E6', color: '#42526E', hoverBg: '#C1C7D0' },
+        indeterminate: { bg: '#CCE0FF', color: '#0052CC', hoverBg: '#B3D4FF' },
+        done:          { bg: '#BAF3DB', color: '#216E4E', hoverBg: '#A3E9CA' },
+    };
+    function statusStyle(categoryKey) {
+        return STATUS_CATEGORY_STYLES[categoryKey] ?? STATUS_CATEGORY_STYLES.new;
     }
 
     const chipBase = {
@@ -505,17 +519,78 @@ function EpicDetailModal({ epic, sprints, onClose, onEpicDone }) {
                         )}
                     </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-                        {transitions !== null && transitions.length > 0 && (
-                            <select
-                                defaultValue=""
-                                onChange={e => { handleTransition(e.target.value); e.target.value = ''; }}
-                                disabled={transitioning}
-                                style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #DFE1E6', borderRadius: 4, color: '#172B4D', background: '#fff', cursor: transitioning ? 'default' : 'pointer', opacity: transitioning ? 0.7 : 1 }}
-                            >
-                                <option value="" disabled>{transitioning ? 'Moving…' : 'Move to…'}</option>
-                                {transitions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                            </select>
-                        )}
+                        {/* Status chip + popover — matches Jira's native look */}
+                        {transitions !== null && (() => {
+                            const st = statusStyle(epicStatus?.categoryKey);
+                            return (
+                                <div style={{ position: 'relative' }}>
+                                    <button
+                                        onClick={() => !transitioning && setStatusOpen(o => !o)}
+                                        disabled={transitioning}
+                                        title="Change status"
+                                        style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                                            padding: '4px 10px 4px 10px',
+                                            background: st.bg, color: st.color,
+                                            border: 'none', borderRadius: 3,
+                                            fontSize: 12, fontWeight: 700, letterSpacing: '0.02em', textTransform: 'uppercase',
+                                            cursor: transitioning ? 'default' : 'pointer',
+                                            opacity: transitioning ? 0.7 : 1,
+                                            whiteSpace: 'nowrap',
+                                            transition: 'background 0.1s',
+                                        }}
+                                    >
+                                        {transitioning ? 'Updating…' : (epicStatus?.name ?? 'Unknown')}
+                                        {!transitioning && <span style={{ fontSize: 9, marginLeft: 2, opacity: 0.7 }}>▼</span>}
+                                    </button>
+                                    {statusOpen && transitions.length > 0 && (
+                                        <>
+                                            {/* click-away backdrop */}
+                                            <div onClick={() => setStatusOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 299 }} />
+                                            <div style={{
+                                                position: 'absolute', top: 'calc(100% + 4px)', right: 0,
+                                                background: '#fff', borderRadius: 4,
+                                                boxShadow: '0 4px 16px rgba(9,30,66,0.2)',
+                                                minWidth: 180, zIndex: 300,
+                                                overflow: 'hidden',
+                                                border: '1px solid #DFE1E6',
+                                            }}>
+                                                <div style={{ padding: '6px 12px 4px', fontSize: 11, fontWeight: 700, color: '#6B778C', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #F4F5F7' }}>
+                                                    Move to
+                                                </div>
+                                                {transitions.map(t => {
+                                                    const ts = statusStyle(t.categoryKey);
+                                                    return (
+                                                        <div
+                                                            key={t.id}
+                                                            onClick={() => handleTransition(t)}
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: 10,
+                                                                padding: '8px 12px',
+                                                                cursor: 'pointer',
+                                                                fontSize: 13, color: '#172B4D',
+                                                                transition: 'background 0.1s',
+                                                            }}
+                                                            onMouseEnter={e => e.currentTarget.style.background = '#F4F5F7'}
+                                                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                                        >
+                                                            <span style={{
+                                                                display: 'inline-block',
+                                                                padding: '2px 8px', borderRadius: 3,
+                                                                background: ts.bg, color: ts.color,
+                                                                fontSize: 11, fontWeight: 700,
+                                                                textTransform: 'uppercase', letterSpacing: '0.02em',
+                                                                whiteSpace: 'nowrap',
+                                                            }}>{t.name}</span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            );
+                        })()}
                         <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6B778C', padding: '0 2px', lineHeight: 1 }}>✕</button>
                     </div>
                 </div>
